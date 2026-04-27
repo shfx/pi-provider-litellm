@@ -1,0 +1,60 @@
+{
+  "name": "@balcsida/pi-provider-litellm",
+  "version": "0.1.0",
+  "description": "LiteLLM proxy provider extension for pi-mono.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Dávid Balatoni <balcsida@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/balcsida/pi-provider-litellm.git"
+  },
+  "homepage": "https://github.com/balcsida/pi-provider-litellm",
+  "bugs": "https://github.com/balcsida/pi-provider-litellm/issues",
+  "keywords": ["pi-mono", "litellm", "llm", "extension", "provider", "proxy"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "pi": {
+    "extensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "build": "tsgo -p tsconfig.build.json",
+    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsgo --noEmit",
+    "lint": "biome check --error-on-warnings .",
+    "format": "biome check --write .",
+    "test": "vitest --run",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "prepublishOnly": "npm run check && npm run clean && npm run build"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-ai": "^0.70.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@types/node": "^24.3.0",
+    "@typescript/native-preview": "7.0.0-dev.20260120.1",
+    "shx": "^0.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}
