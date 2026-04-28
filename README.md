@@ -1,6 +1,6 @@
-# @balcsida/pi-provider-litellm
+# pi-provider-litellm
 
-[![npm version](https://img.shields.io/npm/v/@balcsida/pi-provider-litellm.svg)](https://www.npmjs.com/package/@balcsida/pi-provider-litellm)
+[![npm version](https://img.shields.io/npm/v/pi-provider-litellm.svg)](https://www.npmjs.com/package/pi-provider-litellm)
 
 LiteLLM proxy provider extension for [pi-mono](https://github.com/badlogic/pi-mono).
 
@@ -9,7 +9,7 @@ Discovers models from a self-hosted LiteLLM proxy and registers them under the `
 ## Install
 
 ```bash
-pi install npm:@balcsida/pi-provider-litellm
+pi install npm:pi-provider-litellm
 ```
 
 Pi fetches the package from npm and registers it. Add `-l` to install into project settings (`.pi/settings.json`) instead of global.
@@ -17,7 +17,7 @@ Pi fetches the package from npm and registers it. Add `-l` to install into proje
 To try it without installing (one-off, current run only):
 
 ```bash
-pi -e npm:@balcsida/pi-provider-litellm
+pi -e npm:pi-provider-litellm
 ```
 
 <details>

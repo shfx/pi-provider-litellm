@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- README install instructions now use `pi install npm:@balcsida/pi-provider-litellm` (and `pi -e` for ephemeral trials), with the source-clone path kept as a fallback.
+- Renamed package from `@balcsida/pi-provider-litellm` to unscoped `pi-provider-litellm` to match the `pi-provider-*` convention used by other extensions in the pi-mono ecosystem. The previous scoped name was published as 0.1.0 only.
+- README install instructions now use `pi install npm:pi-provider-litellm` (and `pi -e` for ephemeral trials), with the source-clone path kept as a fallback.
 
 ## [0.1.0] - 2026-04-27
 
