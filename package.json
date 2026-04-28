@@ -1,6 +1,6 @@
 {
   "name": "@balcsida/pi-provider-litellm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LiteLLM proxy provider extension for pi-mono.",
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,7 @@
   "bugs": "https://github.com/balcsida/pi-provider-litellm/issues",
   "keywords": [
     "pi-mono",
+    "pi-package",
     "litellm",
     "llm",
     "extension",
