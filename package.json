@@ -13,6 +13,7 @@
   "bugs": "https://github.com/balcsida/pi-provider-litellm/issues",
   "keywords": [
     "pi-mono",
+    "pi-package",
     "litellm",
     "llm",
     "extension",
