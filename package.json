@@ -1,6 +1,6 @@
 {
   "name": "pi-provider-litellm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "LiteLLM proxy provider extension for pi-mono.",
   "type": "module",
   "license": "MIT",
@@ -31,13 +31,13 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
+    "LICENSE"
   ],
   "pi": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/balcsida/pi-provider-litellm/main/assets/pi_litellm_gallery.png"
   },
   "scripts": {
     "clean": "shx rm -rf dist",
