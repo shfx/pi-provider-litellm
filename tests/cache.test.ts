@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { fingerprint, isCacheValid, readCache, writeCache } from "../src/cache.j
 import type { CacheFile } from "../src/types.js";
 
 describe("fingerprint", () => {
-  it("produces a stable sha256 hex digest", () => {
+  it("produces a stable keyed hex digest", () => {
     expect(fingerprint("secret")).toBe(fingerprint("secret"));
     expect(fingerprint("secret")).toHaveLength(64);
     expect(fingerprint("secret")).toMatch(/^[a-f0-9]+$/);
@@ -14,6 +15,12 @@ describe("fingerprint", () => {
 
   it("differs across inputs", () => {
     expect(fingerprint("a")).not.toBe(fingerprint("b"));
+  });
+
+  it("does not store the raw sha256 digest of the API key", () => {
+    const rawDigest = createHash("sha256").update("secret").digest("hex");
+
+    expect(fingerprint("secret")).not.toBe(rawDigest);
   });
 });
 

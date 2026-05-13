@@ -22,8 +22,18 @@ export function normalizeBaseUrl(input: string): string {
 // `cacheControlFormat: "anthropic"` flag, pi never relays cache_control markers
 // through the proxy, so prompt caching silently no-ops on Claude models.
 const ANTHROPIC_MODEL_PATTERN = /^(anthropic\/|claude|opus|sonnet|haiku)/i;
+const MOONSHOT_MODEL_PATTERN = /^(moonshotai\/|moonshot\/|kimi[-/])/i;
 
 export function buildCompat(modelId: string): ProviderModelConfig["compat"] {
+  if (MOONSHOT_MODEL_PATTERN.test(modelId)) {
+    return {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStrictMode: false,
+      maxTokensField: "max_tokens",
+    };
+  }
   if (ANTHROPIC_MODEL_PATTERN.test(modelId)) {
     return { supportsStore: false, cacheControlFormat: "anthropic" };
   }

@@ -1,6 +1,6 @@
 # pi-provider-litellm
 
-LiteLLM proxy provider extension for [pi-mono](https://github.com/badlogic/pi-mono).
+LiteLLM proxy provider extension for [Pi](https://pi.dev).
 
 Discovers models from a self-hosted LiteLLM proxy and registers them under the `litellm` provider. Supports `/login litellm` and `/litellm-refresh`. Tries `/model/info` first (admin endpoint with rich metadata), falls back to `/v1/models` (OpenAI-compatible) on 401/403/404.
 
@@ -32,14 +32,7 @@ npm run build
 
 ## Configure
 
-### Option A — environment variables
-
-```bash
-export LITELLM_BASE_URL="https://litellm.your-domain.com"
-export LITELLM_API_KEY="sk-..."
-```
-
-### Option B — interactive login
+### Option A — interactive login
 
 Inside pi:
 
@@ -49,15 +42,20 @@ Inside pi:
 
 You'll be prompted for the base URL and API key. Credentials are persisted to `~/.pi/agent/auth.json`.
 
+### Option B — environment variables
+
+```bash
+export LITELLM_BASE_URL="https://litellm.your-domain.com"
+export LITELLM_API_KEY="sk-..."
+```
+
 Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the environment key is used when no saved credential exists. `LITELLM_BASE_URL` is used when no saved login base URL exists.
 
 ## Use
 
 ```
-/model litellm/anthropic/claude-3-5-sonnet
+/model
 ```
-
-(Whatever model IDs your proxy exposes — see the discovered list at startup.)
 
 ## Optional environment variables
 
@@ -74,7 +72,7 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 
 ## Cache
 
-The model list is cached at `~/.pi/agent/litellm-models.json` with a sha256 fingerprint of the base URL + API key. Changing either invalidates the cache automatically.
+The model list is cached at `~/.pi/agent/litellm-models.json` with a keyed fingerprint of the base URL + API key. Changing either invalidates the cache automatically.
 
 ## Troubleshooting
 

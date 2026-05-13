@@ -1,7 +1,7 @@
 {
   "name": "pi-provider-litellm",
   "version": "1.2.0",
-  "description": "LiteLLM proxy provider extension for pi-mono.",
+  "description": "LiteLLM proxy provider extension for Pi",
   "type": "module",
   "license": "MIT",
   "author": "Dávid Balatoni <balcsida@gmail.com>",
@@ -56,6 +56,11 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "^0.74.0",
     "@earendil-works/pi-coding-agent": "^0.74.0"
+  },
+  "overrides": {
+    "basic-ftp": "6.0.1",
+    "fast-xml-builder": "1.2.0",
+    "protobufjs": "8.2.1"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.74.0",

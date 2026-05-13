@@ -18,3 +18,15 @@ describe("package gallery metadata", () => {
     expect(readme).not.toContain("https://img.shields.io/npm/v/pi-provider-litellm.svg");
   });
 });
+
+describe("dependency security overrides", () => {
+  it("keeps vulnerable transitive dependencies above alerted ranges", async () => {
+    const lockfile = JSON.parse(await readFile("package-lock.json", "utf8")) as {
+      packages?: Record<string, { version?: string }>;
+    };
+
+    expect(lockfile.packages?.["node_modules/basic-ftp"]?.version).toBe("6.0.1");
+    expect(lockfile.packages?.["node_modules/protobufjs"]?.version).toBe("8.2.1");
+    expect(lockfile.packages?.["node_modules/fast-xml-builder"]?.version).toBe("1.2.0");
+  });
+});

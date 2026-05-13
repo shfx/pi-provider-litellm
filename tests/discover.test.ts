@@ -41,8 +41,24 @@ describe("buildCompat", () => {
   it("returns supportsStore: false for non-anthropic models", () => {
     expect(buildCompat("openai/gpt-4o")).toEqual({ supportsStore: false });
     expect(buildCompat("gemini/gemini-2.0-flash")).toEqual({ supportsStore: false });
-    expect(buildCompat("kimi-k2.6")).toEqual({ supportsStore: false });
     expect(buildCompat("gpt-5.5")).toEqual({ supportsStore: false });
+  });
+
+  it("adds Moonshot-compatible tool calling flags for Kimi models", () => {
+    expect(buildCompat("kimi-k2.6")).toEqual({
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStrictMode: false,
+      maxTokensField: "max_tokens",
+    });
+    expect(buildCompat("moonshotai/kimi-k2")).toEqual({
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStrictMode: false,
+      maxTokensField: "max_tokens",
+    });
   });
 
   it("adds cacheControlFormat for anthropic-prefixed models", () => {
