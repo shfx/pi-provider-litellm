@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildCompat, discoverModels, normalizeBaseUrl } from "../src/discover.js";
+import { buildCompat, discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent } from "../src/discover.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -86,6 +86,21 @@ describe("buildCompat", () => {
       supportsStore: false,
       cacheControlFormat: "anthropic",
     });
+  });
+});
+
+describe("shouldSuppressReasoningContent", () => {
+  it("suppresses separate reasoning streams for Kimi/Moonshot aliases", () => {
+    expect(shouldSuppressReasoningContent("kimi-k2.6")).toBe(true);
+    expect(shouldSuppressReasoningContent("moonshotai/kimi-k2")).toBe(true);
+  });
+
+  it("does not suppress explicit forced-thinking models", () => {
+    expect(shouldSuppressReasoningContent("kimi-k2-thinking")).toBe(false);
+  });
+
+  it("does not suppress unrelated models", () => {
+    expect(shouldSuppressReasoningContent("openai/gpt-4o")).toBe(false);
   });
 });
 

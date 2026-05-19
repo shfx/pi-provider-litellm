@@ -120,6 +120,37 @@ describe("feature parity", () => {
     expect(pi.handlers.has("before_provider_request")).toBe(true);
     expect(pi.handlers.has("after_provider_response")).toBe(true);
     expect(pi.handlers.has("message_end")).toBe(true);
+  });
+
+  it("does not inject LiteLLM session ids into non-LiteLLM provider requests", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "anthropic/claude-3-5-sonnet",
+              model_info: {
+                mode: "chat",
+                input_cost_per_token: 0.000003,
+                output_cost_per_token: 0.000015,
+                cache_read_input_token_cost: 0.0000003,
+                cache_creation_input_token_cost: 0.00000375,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
 
     const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
     for (const handler of sessionStartHandlers) {
@@ -134,11 +165,181 @@ describe("feature parity", () => {
     }
 
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
-    const updated = beforeRequest?.({ payload: { messages: [] } });
+    const updated = beforeRequest?.(
+      { payload: { messages: [] } },
+      { model: { provider: "openai-codex", id: "gpt-5.5" } },
+    );
+    expect(updated).toBeUndefined();
+  });
+
+  it("injects LiteLLM session ids into LiteLLM provider requests", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "anthropic/claude-3-5-sonnet",
+              model_info: {
+                mode: "chat",
+                input_cost_per_token: 0.000003,
+                output_cost_per_token: 0.000015,
+                cache_read_input_token_cost: 0.0000003,
+                cache_creation_input_token_cost: 0.00000375,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+    for (const handler of sessionStartHandlers) {
+      await handler(
+        { reason: "reload" },
+        {
+          sessionManager: {
+            getSessionFile: () => join(agentDir, "2026-05-11T16-00-00-000Z_123e4567-e89b-12d3-a456-426614174000.jsonl"),
+          },
+        },
+      );
+    }
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.({ payload: { messages: [] } }, { model: { provider: "litellm", id: "kimi-k2.6" } });
     expect(updated).toMatchObject({
       messages: [],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+      thinking: { type: "disabled" },
       litellm_session_id: "123e4567-e89b-12d3-a456-426614174000",
     });
+  });
+
+  it("suppresses separate Kimi reasoning streams before session ids are available", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "kimi-k2.6",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.({ payload: { messages: [] } }, { model: { provider: "litellm", id: "kimi-k2.6" } });
+    expect(updated).toEqual({
+      messages: [],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+      thinking: { type: "disabled" },
+    });
+  });
+
+  it("normalizes Kimi think tags into Pi thinking blocks", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "kimi-k2.6",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    let message: any = {
+      role: "assistant",
+      provider: "litellm",
+      model: "kimi-k2.6",
+      content: [{ type: "text", text: "<think>internal reasoning</think>DONE" }],
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    };
+    for (const handler of pi.handlers.get("message_end") ?? []) {
+      const result = await handler({ message });
+      if (result?.message) message = result.message;
+    }
+
+    expect(message.content).toEqual([
+      { type: "thinking", thinking: "internal reasoning" },
+      { type: "text", text: "DONE" },
+    ]);
+  });
+
+  it("keeps final Kimi text visible when a dangling think tag prefixes it", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "kimi-k2.6",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    let message: any = {
+      role: "assistant",
+      provider: "litellm",
+      model: "kimi-k2.6",
+      content: [{ type: "text", text: "<think>DONE" }],
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    };
+    for (const handler of pi.handlers.get("message_end") ?? []) {
+      const result = await handler({ message });
+      if (result?.message) message = result.message;
+    }
+
+    expect(message.content).toEqual([{ type: "text", text: "DONE" }]);
   });
 
   it("overrides assistant cost from LiteLLM response metadata", async () => {

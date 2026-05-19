@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
-import { discoverModels, normalizeBaseUrl } from "./discover.js";
+import { discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent } from "./discover.js";
 import { getSessionIdFromFile } from "./litellm.js";
 import type { AuthFileEntry, CacheFile, DiscoveryOptions, DiscoveryResult, ResolvedCredentials } from "./types.js";
 
@@ -129,6 +129,95 @@ function modifyLiteLLMModels(models: Model<Api>[], cred: OAuthCredentials): Mode
   return models.map((m) => (m.provider === PROVIDER_NAME ? { ...m, baseUrl: `${baseUrl}/v1` } : m));
 }
 
+function prepareLiteLLMRequestPayload(
+  payload: Record<string, unknown>,
+  modelId: string | undefined,
+  sessionId: string | undefined,
+): Record<string, unknown> | undefined {
+  let next: Record<string, unknown> | undefined;
+  const update = (key: string, value: unknown): void => {
+    if (payload[key] !== undefined) return;
+    next ??= { ...payload };
+    next[key] = value;
+  };
+
+  if (modelId && shouldSuppressReasoningContent(modelId)) {
+    update("include_reasoning", false);
+    update("reasoning_content", false);
+    update("merge_reasoning_content_in_choices", true);
+    update("thinking", { type: "disabled" });
+  }
+
+  if (sessionId) {
+    next ??= { ...payload };
+    next.litellm_session_id = sessionId;
+  }
+
+  return next;
+}
+
+function normalizeThinkTags(message: AssistantMessage): AssistantMessage | undefined {
+  if (message.provider !== PROVIDER_NAME || !shouldSuppressReasoningContent(message.model)) return;
+
+  let changed = false;
+  const content: AssistantMessage["content"] = [];
+  const appendText = (text: string): void => {
+    if (!text) return;
+    const last = content.at(-1);
+    if (last?.type === "text") {
+      last.text += text;
+      return;
+    }
+    content.push({ type: "text", text });
+  };
+  const appendThinking = (thinking: string): void => {
+    if (!thinking) return;
+    const last = content.at(-1);
+    if (last?.type === "thinking") {
+      last.thinking += thinking;
+      return;
+    }
+    content.push({ type: "thinking", thinking });
+  };
+
+  for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
+    const block = message.content[blockIndex];
+    if (block.type !== "text") {
+      content.push(block);
+      continue;
+    }
+
+    let index = 0;
+    while (index < block.text.length) {
+      const start = block.text.indexOf("<think>", index);
+      if (start === -1) {
+        appendText(block.text.slice(index));
+        break;
+      }
+
+      changed = true;
+      appendText(block.text.slice(index, start));
+      const thinkingStart = start + "<think>".length;
+      const end = block.text.indexOf("</think>", thinkingStart);
+      if (end === -1) {
+        const isBeforeNonTextContent = message.content
+          .slice(blockIndex + 1)
+          .some((nextBlock) => nextBlock.type !== "text");
+        if (isBeforeNonTextContent) appendThinking(block.text.slice(thinkingStart));
+        else appendText(block.text.slice(thinkingStart));
+        index = block.text.length;
+        break;
+      }
+
+      appendThinking(block.text.slice(thinkingStart, end));
+      index = end + "</think>".length;
+    }
+  }
+
+  if (!changed) return;
+  return { ...message, content };
+}
+
 export default async function (pi: ExtensionAPI): Promise<void> {
   const creds = await resolveCredentials();
   const cache = await readCache(getCachePath());
@@ -241,12 +330,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     sessionId = getSessionIdFromFile(ctx.sessionManager.getSessionFile());
   });
 
-  pi.on("before_provider_request", (event) => {
-    if (!sessionId) return;
+  pi.on("before_provider_request", (event, ctx) => {
+    if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
-    return {
-      ...(event.payload as Record<string, unknown>),
-      litellm_session_id: sessionId,
-    };
+    return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+  });
+
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    const message = normalizeThinkTags(event.message as AssistantMessage);
+    if (!message) return;
+    return { message };
   });
 }

@@ -23,9 +23,18 @@ export function normalizeBaseUrl(input: string): string {
 // through the proxy, so prompt caching silently no-ops on Claude models.
 const ANTHROPIC_MODEL_PATTERN = /^(anthropic\/|claude|opus|sonnet|haiku)/i;
 const MOONSHOT_MODEL_PATTERN = /^(moonshotai\/|moonshot\/|kimi[-/])/i;
+const FORCED_THINKING_MODEL_PATTERN = /(?:^|[-/])thinking(?:[-/]|$)/i;
+
+export function isMoonshotModel(modelId: string): boolean {
+  return MOONSHOT_MODEL_PATTERN.test(modelId);
+}
+
+export function shouldSuppressReasoningContent(modelId: string): boolean {
+  return isMoonshotModel(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+}
 
 export function buildCompat(modelId: string): ProviderModelConfig["compat"] {
-  if (MOONSHOT_MODEL_PATTERN.test(modelId)) {
+  if (isMoonshotModel(modelId)) {
     return {
       supportsStore: false,
       supportsDeveloperRole: false,
