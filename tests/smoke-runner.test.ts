@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseSmokeModels, runSmoke } from "../scripts/smoke-runner.js";
+import { parseSmokeModels, runSmoke, runSmokeFromEnv } from "../scripts/smoke-runner.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -103,5 +103,72 @@ describe("runSmoke", () => {
         timeoutMs: 1000,
       }),
     ).rejects.toThrow(/Requested smoke models were not discovered: anthropic-claude-haiku/);
+  });
+
+  it("includes provider response bodies in chat completion failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [{ model_name: "github-models-openai", model_info: { mode: "chat" } }],
+        });
+      }
+      if (url.endsWith("/v1/chat/completions")) {
+        return jsonResponse(429, { error: "rate limited" });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    await expect(
+      runSmoke({
+        baseUrl: "http://127.0.0.1:4000",
+        apiKey: "sk-smoke",
+        modelIds: ["github-models-openai"],
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow(/\/v1\/chat\/completions for github-models-openai returned 429.*rate limited/);
+  });
+});
+
+describe("runSmokeFromEnv", () => {
+  it("loads LiteLLM smoke settings from the environment", async () => {
+    const requests: Array<{ url: string; headers?: Record<string, string> }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        headers: init?.headers as Record<string, string>,
+      });
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [{ model_name: "github-models-openai", model_info: { mode: "chat" } }],
+        });
+      }
+      if (url.endsWith("/v1/chat/completions")) {
+        return jsonResponse(200, {
+          choices: [{ message: { content: "pong" } }],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const result = await runSmokeFromEnv({
+      LITELLM_BASE_URL: " http://127.0.0.1:4000/v1 ",
+      LITELLM_API_KEY: " sk-env ",
+      LITELLM_SMOKE_MODELS: "github-models-openai",
+      LITELLM_SMOKE_TIMEOUT_MS: "1000",
+    });
+
+    expect(result.completions).toEqual([{ modelId: "github-models-openai", content: "pong" }]);
+    expect(requests[0]).toMatchObject({
+      url: "http://127.0.0.1:4000/model/info",
+      headers: { Authorization: "Bearer sk-env" },
+    });
+  });
+
+  it("requires LiteLLM base URL and API key settings", async () => {
+    await expect(runSmokeFromEnv({ LITELLM_BASE_URL: "http://127.0.0.1:4000" })).rejects.toThrow(
+      /LITELLM_BASE_URL and LITELLM_API_KEY must be set/,
+    );
   });
 });

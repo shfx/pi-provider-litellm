@@ -79,7 +79,7 @@ jobs:
           model_list:
             - model_name: github-models-openai
               litellm_params:
-                model: openai/${GH_MODELS_SMOKE_MODEL}
+                model: ${GH_MODELS_SMOKE_MODEL}
                 api_base: https://models.github.ai/inference
                 api_key: os.environ/GITHUB_TOKEN
           YAML

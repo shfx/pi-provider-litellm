@@ -78,7 +78,7 @@ The required baseline route uses GitHub Models with the workflow `GITHUB_TOKEN` 
 | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` | Cheap direct Claude route |
 | `GEMINI_API_KEY` | `gemini-2.5-flash-lite` | Cheap/free-tier-friendly Gemini route |
 
-Optional repository variables override model choices without editing the workflow:
+Optional repository variables override model choices without editing the workflow. `GH_MODELS_SMOKE_MODEL` is a complete LiteLLM model id for the GitHub Models OpenAI-compatible route. The direct vendor variables are bare model names and the workflow adds their provider prefixes.
 
 | Variable | Default |
 |---|---|
