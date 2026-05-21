@@ -214,7 +214,7 @@ describe("discoverModels fallback to /v1/models", () => {
       reasoning: true,
       thinkingLevelMap: { off: null, xhigh: "xhigh" },
       input: ["text", "image"],
-      contextWindow: 272000,
+      contextWindow: 1050000,
       maxTokens: 128000,
       compat: { supportsStore: false },
     });

@@ -14,6 +14,9 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 const KNOWN_PROVIDER_SET = new Set<string>(getProviders());
+const FALLBACK_METADATA_OVERRIDES: Record<string, Partial<ProviderModelConfig>> = {
+  "openai/gpt-5.5": { contextWindow: 1_050_000 },
+};
 
 export function normalizeBaseUrl(input: string): string {
   return input.replace(/\/+$/, "").replace(/\/v1\/?$/i, "");
@@ -79,6 +82,11 @@ function findCatalogModel(id: string, ownedBy?: string): Model<Api> | undefined 
   return undefined;
 }
 
+function getFallbackOverrideKey(id: string, ownedBy?: string): string {
+  const provider = toKnownProvider(ownedBy) ?? toKnownProvider(id.split("/")[0]);
+  return provider && !id.includes("/") ? `${provider}/${id}` : id;
+}
+
 function withTimeout(timeoutMs: number, signal?: AbortSignal): { signal: AbortSignal; cancel: () => void } {
   const controller = new AbortController();
   const onAbort = () => controller.abort(signal?.reason);
@@ -142,6 +150,7 @@ function mapFromModelsList(entry: ModelsListEntry): ProviderModelConfig | undefi
   const id = entry.id;
   if (!id) return undefined;
   const catalogModel = findCatalogModel(id, entry.owned_by);
+  const fallbackOverride = FALLBACK_METADATA_OVERRIDES[getFallbackOverrideKey(id, entry.owned_by)] ?? {};
   return {
     id,
     name: catalogModel?.name ?? `${id} (no metadata)`,
@@ -152,6 +161,7 @@ function mapFromModelsList(entry: ModelsListEntry): ProviderModelConfig | undefi
     contextWindow: catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: catalogModel?.maxTokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
+    ...fallbackOverride,
   };
 }
 
