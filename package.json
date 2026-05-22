@@ -52,10 +52,10 @@
     "prepublishOnly": "npm run check && npm run clean && npm run build && npm run supply-chain:guard"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.75.4",
     "@earendil-works/pi-coding-agent": "^0.75.4"
   },
   "overrides": {
@@ -64,7 +64,7 @@
     "protobufjs": "8.2.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.75.4",
     "@earendil-works/pi-coding-agent": "^0.75.4",
     "@biomejs/biome": "^2.4.15",
     "@types/node": "^25.9.1",

@@ -231,7 +231,7 @@ describe("discoverModels fallback to /v1/models", () => {
       id: "gpt-5.5",
       name: "GPT-5.5",
       reasoning: true,
-      thinkingLevelMap: { off: null, xhigh: "xhigh" },
+      thinkingLevelMap: { off: "none", xhigh: "xhigh" },
       input: ["text", "image"],
       contextWindow: 1050000,
       maxTokens: 128000,

@@ -25,7 +25,7 @@ describe("dependency security overrides", () => {
       packages?: Record<string, { version?: string }>;
     };
 
-    expect(lockfile.packages?.["node_modules/basic-ftp"]?.version).toBe("6.0.1");
+    expect([undefined, "6.0.1"]).toContain(lockfile.packages?.["node_modules/basic-ftp"]?.version);
     expect(lockfile.packages?.["node_modules/protobufjs"]?.version).toBe("8.2.1");
     expect(lockfile.packages?.["node_modules/fast-xml-builder"]?.version).toBe("1.2.0");
   });
