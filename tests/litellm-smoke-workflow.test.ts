@@ -30,6 +30,7 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).toContain("api_base: http://host.docker.internal:8100/v1");
     expect(workflow).toContain("api_base: http://host.docker.internal:8100");
     expect(workflow).toContain("--add-host=host.docker.internal:host-gateway");
+    expect(workflow.match(/curl -fsS --connect-timeout 1 --max-time 3/g)).toHaveLength(2);
     expect(workflow).toContain("Run Pi CLI smoke");
     expect(workflow).toContain("./node_modules/.bin/pi -e ./dist/index.js --list-models litellm");
     expect(workflow).toContain("--provider litellm");
