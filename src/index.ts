@@ -87,7 +87,10 @@ async function discoverWithFallback(
   }
 }
 
-async function loginLiteLLM(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+async function loginLiteLLM(
+  callbacks: OAuthLoginCallbacks,
+  onCacheWrite?: (cache: CacheFile) => void,
+): Promise<OAuthCredentials> {
   const rawBaseUrl = (
     await callbacks.onPrompt({
       message: "Enter LiteLLM proxy URL (no trailing /v1):",
@@ -103,13 +106,15 @@ async function loginLiteLLM(callbacks: OAuthLoginCallbacks): Promise<OAuthCreden
     signal: callbacks.signal,
   });
 
-  await writeCache(getCachePath(), {
+  const cache: CacheFile = {
     baseUrl,
     apiKeyFingerprint: fingerprint(apiKey),
     fetchedAt: Date.now(),
     source,
     models,
-  });
+  };
+  await writeCache(getCachePath(), cache);
+  onCacheWrite?.(cache);
   callbacks.onProgress?.(`LiteLLM: ${models.length} models discovered (source: ${source})`);
 
   return {
@@ -270,7 +275,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   const oauth = {
     name: "LiteLLM",
-    login: loginLiteLLM,
+    login: (callbacks: OAuthLoginCallbacks) =>
+      loginLiteLLM(callbacks, (next) => {
+        cacheFetchedAt = next.fetchedAt;
+      }),
     refreshToken: refreshLiteLLM,
     getApiKey: (cred: OAuthCredentials) => cred.access,
     modifyModels: modifyLiteLLMModels,

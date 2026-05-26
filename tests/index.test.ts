@@ -190,4 +190,47 @@ describe("extension startup", () => {
     expect(cache.models.map((model) => model.id)).toEqual(["vidaimock-openai"]);
     expect(progress).toHaveBeenCalledWith("LiteLLM: 1 models discovered (source: model_info)");
   });
+
+  it("uses the login cache timestamp for later stale auto-refresh", async () => {
+    const agentDir = await makeAgentDir();
+    delete process.env.LITELLM_BASE_URL;
+    delete process.env.LITELLM_API_KEY;
+    delete process.env.LITELLM_DISCOVERY_TIMEOUT_MS;
+    const loginTime = new Date("2026-05-01T00:00:00.000Z").getTime();
+    vi.spyOn(Date, "now").mockReturnValue(loginTime);
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        callCount++;
+        return jsonResponse(200, {
+          data: [{ model_name: `vidaimock-openai-${callCount}`, model_info: { mode: "chat" } }],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+    expect(callCount).toBe(0);
+
+    const credential = await pi.providers[0]?.config.oauth?.login({
+      onPrompt: async (options) => (options.placeholder ? " http://127.0.0.1:4000/v1 " : " sk-login "),
+      signal: new AbortController().signal,
+    });
+    expect(callCount).toBe(1);
+    await writeFile(join(agentDir, "auth.json"), JSON.stringify({ litellm: { type: "oauth", ...credential } }), "utf8");
+
+    vi.mocked(Date.now).mockReturnValue(loginTime + 25 * 60 * 60 * 1000);
+    const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+    for (const handler of sessionStartHandlers) {
+      await handler({ reason: "start" }, { sessionManager: { getSessionFile: () => undefined } });
+    }
+
+    await vi.waitFor(() => {
+      expect(callCount).toBe(2);
+      expect(pi.providers).toHaveLength(2);
+    });
+  });
 });
