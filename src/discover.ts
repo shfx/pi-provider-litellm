@@ -47,7 +47,7 @@ export function normalizeBaseUrl(input: string): string {
 // `google/claude-sonnet-4-6`, `opus-4.7`, `sonnet-4.6`, `haiku-4.5`). Without
 // the `cacheControlFormat: "anthropic"` flag, pi never relays cache_control
 // markers through the proxy, so prompt caching silently no-ops on Claude models.
-const ANTHROPIC_MODEL_PATTERN = /(?:^|[-_/.:])(anthropic\/|claude|opus|sonnet|haiku)/i;
+const ANTHROPIC_MODEL_PATTERN = /(?:^|[-_/.:])(?:anthropic\/|(?:claude|opus|sonnet|haiku)(?=$|[-_/.:]))/i;
 const MOONSHOT_MODEL_PATTERN = /^(moonshotai\/|moonshot\/|kimi[-/])/i;
 const FORCED_THINKING_MODEL_PATTERN = /(?:^|[-/])thinking(?:[-/]|$)/i;
 

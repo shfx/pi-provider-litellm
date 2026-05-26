@@ -84,6 +84,11 @@ describe("buildCompat", () => {
     });
   });
 
+  it("does not match non-Anthropic tokens that start with Anthropic family names", () => {
+    expect(buildCompat("openai/sonnetic-gpt")).toEqual({ supportsStore: false });
+    expect(buildCompat("vendor/opusflow")).toEqual({ supportsStore: false });
+  });
+
   it("matches case-insensitively", () => {
     expect(buildCompat("Opus-4.7")).toEqual({
       supportsStore: false,
