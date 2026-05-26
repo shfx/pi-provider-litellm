@@ -17,6 +17,9 @@ const ENV_OFFLINE = "LITELLM_OFFLINE";
 const DEFAULT_TIMEOUT_MS = 5000;
 const LOGIN_TIMEOUT_MS = 10_000;
 const CACHE_FILENAME = "litellm-models.json";
+const CACHE_STALE_MS = 24 * 60 * 60 * 1000;
+
+type RefreshResult = { models: ProviderModelConfig[]; source: string };
 
 function getAuthPath(): string {
   return join(getAgentDir(), "auth.json");
@@ -86,7 +89,10 @@ async function discoverWithFallback(
   }
 }
 
-async function loginLiteLLM(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+async function loginLiteLLM(
+  callbacks: OAuthLoginCallbacks,
+  onCacheWrite?: (cache: CacheFile) => void,
+): Promise<OAuthCredentials> {
   const rawBaseUrl = (
     await callbacks.onPrompt({
       message: "Enter LiteLLM proxy URL (no trailing /v1):",
@@ -102,13 +108,15 @@ async function loginLiteLLM(callbacks: OAuthLoginCallbacks): Promise<OAuthCreden
     signal: callbacks.signal,
   });
 
-  await writeCache(getCachePath(), {
+  const cache: CacheFile = {
     baseUrl,
     apiKeyFingerprint: fingerprint(apiKey),
     fetchedAt: Date.now(),
     source,
     models,
-  });
+  };
+  await writeCache(getCachePath(), cache);
+  onCacheWrite?.(cache);
   callbacks.onProgress?.(`LiteLLM: ${models.length} models discovered (source: ${source})`);
 
   return {
@@ -222,6 +230,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const creds = await resolveCredentials();
   const cache = await readCache(getCachePath());
   const fp = creds.apiKey ? fingerprint(creds.apiKey) : undefined;
+  let cacheFetchedAt = cache?.fetchedAt ?? 0;
 
   const cacheValid =
     cache !== null &&
@@ -258,6 +267,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           models: result.models,
         };
         await writeCache(getCachePath(), next);
+        cacheFetchedAt = next.fetchedAt;
         if (isListModelsMode()) {
           process.stderr.write(`LiteLLM: ${result.models.length} models discovered (source: ${result.source}).\n`);
         }
@@ -267,54 +277,75 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   const oauth = {
     name: "LiteLLM",
-    login: loginLiteLLM,
+    login: (callbacks: OAuthLoginCallbacks) =>
+      loginLiteLLM(callbacks, (next) => {
+        cacheFetchedAt = next.fetchedAt;
+      }),
     refreshToken: refreshLiteLLM,
     getApiKey: (cred: OAuthCredentials) => cred.access,
     modifyModels: modifyLiteLLMModels,
   };
 
-  pi.registerProvider(PROVIDER_NAME, {
-    baseUrl: creds.baseUrl ? `${creds.baseUrl}/v1` : "https://litellm.example.com/v1",
-    apiKey: ENV_API_KEY,
-    api: "openai-completions",
-    models,
-    oauth,
-  });
+  function registerProvider(baseUrl: string | undefined, models: ProviderModelConfig[]): void {
+    pi.registerProvider(PROVIDER_NAME, {
+      baseUrl: baseUrl ? `${baseUrl}/v1` : "https://litellm.example.com/v1",
+      apiKey: ENV_API_KEY,
+      api: "openai-completions",
+      models,
+      oauth,
+    });
+  }
+
+  registerProvider(creds.baseUrl, models);
+
+  const updateCosts = setupLiteLLMCostTracking(pi, models);
+
+  let refreshInProgress: Promise<RefreshResult> | null = null;
+
+  function discoveryDisabledReason(): string | null {
+    if (isOffline()) return `${ENV_OFFLINE}=1`;
+    if (getDiscoveryTimeoutMs() === 0) return `${ENV_TIMEOUT}=0`;
+    return null;
+  }
+
+  async function refreshModelsAndCosts(): Promise<RefreshResult> {
+    const fresh = await resolveCredentials();
+    const freshFp = fresh.apiKey ? fingerprint(fresh.apiKey) : undefined;
+    if (!fresh.baseUrl || !fresh.apiKey || !freshFp) {
+      throw new Error("no credentials. Run /login litellm or set env vars.");
+    }
+    const result = await discoverModels(fresh.baseUrl, fresh.apiKey, { timeoutMs: getDiscoveryTimeoutMs() });
+    const now = Date.now();
+    await writeCache(getCachePath(), {
+      baseUrl: fresh.baseUrl,
+      apiKeyFingerprint: freshFp,
+      fetchedAt: now,
+      source: result.source,
+      models: result.models,
+    });
+    registerProvider(fresh.baseUrl, result.models);
+    updateCosts(result.models);
+    cacheFetchedAt = now;
+    return { models: result.models, source: result.source };
+  }
+
+  function runRefresh(): Promise<RefreshResult> {
+    refreshInProgress ??= refreshModelsAndCosts().finally(() => {
+      refreshInProgress = null;
+    });
+    return refreshInProgress;
+  }
 
   pi.registerCommand("litellm-refresh", {
     description: "Re-discover models from the LiteLLM proxy.",
     handler: async (_args, ctx) => {
-      if (isOffline()) {
-        ctx.ui.notify(`LiteLLM refresh disabled (${ENV_OFFLINE}=1)`, "warning");
-        return;
-      }
-      const timeoutMs = getDiscoveryTimeoutMs();
-      if (timeoutMs === 0) {
-        ctx.ui.notify(`LiteLLM refresh disabled (${ENV_TIMEOUT}=0)`, "warning");
-        return;
-      }
-      const fresh = await resolveCredentials();
-      const freshFp = fresh.apiKey ? fingerprint(fresh.apiKey) : undefined;
-      if (!fresh.baseUrl || !fresh.apiKey || !freshFp) {
-        ctx.ui.notify("LiteLLM refresh failed: no credentials. Run /login litellm or set env vars.", "error");
+      const disabledReason = discoveryDisabledReason();
+      if (disabledReason) {
+        ctx.ui.notify(`LiteLLM refresh disabled (${disabledReason})`, "warning");
         return;
       }
       try {
-        const result = await discoverModels(fresh.baseUrl, fresh.apiKey, { timeoutMs });
-        await writeCache(getCachePath(), {
-          baseUrl: fresh.baseUrl,
-          apiKeyFingerprint: freshFp,
-          fetchedAt: Date.now(),
-          source: result.source,
-          models: result.models,
-        });
-        pi.registerProvider(PROVIDER_NAME, {
-          baseUrl: `${fresh.baseUrl}/v1`,
-          apiKey: ENV_API_KEY,
-          api: "openai-completions",
-          models: result.models,
-          oauth,
-        });
+        const result = await runRefresh();
         ctx.ui.notify(`LiteLLM: ${result.models.length} models refreshed (source: ${result.source})`, "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -323,11 +354,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     },
   });
 
-  setupLiteLLMCostTracking(pi);
-
   let sessionId: string | undefined;
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     sessionId = getSessionIdFromFile(ctx.sessionManager.getSessionFile());
+
+    if (discoveryDisabledReason() || !cacheFetchedAt || Date.now() - cacheFetchedAt <= CACHE_STALE_MS) return;
+    void runRefresh().catch(() => undefined);
   });
 
   pi.on("before_provider_request", (event, ctx) => {

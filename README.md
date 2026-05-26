@@ -80,6 +80,8 @@ This keeps the LiteLLM integration path under test but does not call real LLM AP
 
 The model list is cached at `~/.pi/agent/litellm-models.json` with a keyed fingerprint of the base URL + API key. Changing either invalidates the cache automatically.
 
+If the cache is older than 24 hours, the extension refreshes it in the background on session start (non-blocking). Failures are silent — the cached models remain in use. Run `/litellm-refresh` to force an immediate refresh.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |

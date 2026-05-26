@@ -1,5 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { resolveCredentials } from "./litellm.js";
+import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 export interface ModelCostInfo {
   inputCostPerToken: number;
@@ -8,70 +7,28 @@ export interface ModelCostInfo {
   cacheWriteCostPerToken: number;
 }
 
-export function setupLiteLLMCostTracking(pi: ExtensionAPI): void {
+export function setupLiteLLMCostTracking(
+  pi: ExtensionAPI,
+  models: ProviderModelConfig[],
+): (models: ProviderModelConfig[]) => void {
   const modelCosts = new Map<string, ModelCostInfo>();
   let lastResponseCost: number | null = null;
 
-  pi.on("session_start", async (_event, ctx) => {
-    try {
-      const config = await resolveCredentials();
-      if (!config.baseUrl || !config.apiKey) {
-        ctx.ui?.notify?.("LiteLLM cost extension: no credentials configured", "warning");
-        return;
-      }
-
-      const response = await fetch(`${config.baseUrl}/model/info`, {
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          Accept: "application/json",
-        },
+  // pi reports model costs per million tokens; cost lookups multiply by raw token counts.
+  const updateCosts = (newModels: ProviderModelConfig[]): void => {
+    modelCosts.clear();
+    for (const model of newModels) {
+      if (!model.cost) continue;
+      modelCosts.set(model.id, {
+        inputCostPerToken: (model.cost.input ?? 0) / 1_000_000,
+        outputCostPerToken: (model.cost.output ?? 0) / 1_000_000,
+        cacheReadCostPerToken: (model.cost.cacheRead ?? 0) / 1_000_000,
+        cacheWriteCostPerToken: (model.cost.cacheWrite ?? 0) / 1_000_000,
       });
-
-      if (!response.ok) {
-        ctx.ui?.notify?.(`LiteLLM cost extension: /model/info returned ${response.status}`, "warning");
-        return;
-      }
-
-      const payload = (await response.json()) as {
-        data: Array<{
-          model_name: string;
-          litellm_params?: { model?: string };
-          model_info?: {
-            input_cost_per_token?: number;
-            output_cost_per_token?: number;
-            cache_read_input_token_cost?: number;
-            cache_creation_input_token_cost?: number;
-          };
-        }>;
-      };
-
-      for (const entry of payload.data) {
-        const info = entry.model_info;
-        if (!info) continue;
-
-        const costInfo: ModelCostInfo = {
-          inputCostPerToken: info.input_cost_per_token ?? 0,
-          outputCostPerToken: info.output_cost_per_token ?? 0,
-          cacheReadCostPerToken: info.cache_read_input_token_cost ?? 0,
-          cacheWriteCostPerToken: info.cache_creation_input_token_cost ?? 0,
-        };
-
-        modelCosts.set(entry.model_name, costInfo);
-        if (entry.litellm_params?.model) {
-          modelCosts.set(entry.litellm_params.model, costInfo);
-        }
-      }
-
-      if (modelCosts.size > 0) {
-        ctx.ui?.notify?.(`LiteLLM cost: loaded pricing for ${modelCosts.size} model(s)`, "info");
-      }
-    } catch (error) {
-      ctx.ui?.notify?.(
-        `LiteLLM cost extension: could not fetch /model/info (${error instanceof Error ? error.message : String(error)})`,
-        "warning",
-      );
     }
-  });
+  };
+
+  updateCosts(models);
 
   pi.on("after_provider_response", (event) => {
     const costHeader = event.headers?.["x-litellm-response-cost"] ?? event.headers?.["X-Litellm-Response-Cost"];
@@ -168,4 +125,6 @@ export function setupLiteLLMCostTracking(pi: ExtensionAPI): void {
 
     return;
   });
+
+  return updateCosts;
 }

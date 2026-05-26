@@ -1,4 +1,5 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { scryptSync } from "node:crypto";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -398,5 +399,275 @@ describe("feature parity", () => {
         },
       },
     });
+  });
+
+  it("updates costs after litellm-refresh", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        callCount++;
+        // First call: original costs; second call (refresh): doubled costs
+        const inputCost = callCount === 1 ? 0.000003 : 0.000006;
+        const outputCost = callCount === 1 ? 0.000015 : 0.00003;
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "test-model",
+              model_info: {
+                mode: "chat",
+                input_cost_per_token: inputCost,
+                output_cost_per_token: outputCost,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    // Fire session_start handlers (no cache file exists → staleness check skipped)
+    const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+    for (const handler of sessionStartHandlers) {
+      await handler({ reason: "start" }, { sessionManager: { getSessionFile: () => undefined } });
+    }
+
+    // Get initial cost from model-based calculation
+    const endHandler = pi.handlers.get("message_end")?.[0];
+    const initialResult = await endHandler?.({
+      message: {
+        role: "assistant",
+        model: "test-model",
+        usage: { input: 1000, output: 1000 },
+      },
+    });
+    // input: 0.000003 * 1000 = 0.003, output: 0.000015 * 1000 = 0.015
+    expect(initialResult.message.usage.cost.total).toBeCloseTo(0.018, 6);
+
+    // Run /litellm-refresh to update models and costs
+    const refreshCmd = pi.commands.get("litellm-refresh");
+    const notifications: Array<{ message: string; type: string }> = [];
+    await refreshCmd!.handler([], {
+      ui: {
+        notify: (message: string, type: string) => {
+          notifications.push({ message, type });
+        },
+      },
+    });
+    expect(notifications[0].type).toBe("info");
+
+    // Now get cost after refresh (costs doubled)
+    const refreshedResult = await endHandler?.({
+      message: {
+        role: "assistant",
+        model: "test-model",
+        usage: { input: 1000, output: 1000 },
+      },
+    });
+    // input: 0.000006 * 1000 = 0.006, output: 0.000030 * 1000 = 0.030
+    expect(refreshedResult.message.usage.cost.total).toBeCloseTo(0.036, 6);
+  });
+
+  it("shares concurrent litellm-refresh requests", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    const fp = scryptSync("sk-test", "pi-provider-litellm-cache-fingerprint-v1", 32).toString("hex");
+    await writeFile(
+      join(agentDir, "litellm-models.json"),
+      JSON.stringify({
+        baseUrl: "https://litellm.example.com",
+        apiKeyFingerprint: fp,
+        fetchedAt: Date.now(),
+        source: "model_info",
+        models: [{ id: "test-model", name: "test-model", cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }],
+      }),
+    );
+
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        callCount++;
+        if (callCount > 1) throw new Error("overlapping discovery");
+        await fetchGate;
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "test-model",
+              model_info: {
+                mode: "chat",
+                input_cost_per_token: 0.000006,
+                output_cost_per_token: 0.00003,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const refreshCmd = pi.commands.get("litellm-refresh");
+    const notifications: Array<{ message: string; type: string }> = [];
+    const ctx = {
+      ui: {
+        notify: (message: string, type: string) => {
+          notifications.push({ message, type });
+        },
+      },
+    };
+
+    const firstRefresh = refreshCmd!.handler([], ctx);
+    await vi.waitFor(() => expect(callCount).toBe(1));
+    const secondRefresh = refreshCmd!.handler([], ctx);
+    releaseFetch();
+    await Promise.all([firstRefresh, secondRefresh]);
+
+    expect(callCount).toBe(1);
+    expect(notifications).toEqual([
+      { message: "LiteLLM: 1 models refreshed (source: model_info)", type: "info" },
+      { message: "LiteLLM: 1 models refreshed (source: model_info)", type: "info" },
+    ]);
+  });
+
+  it("auto-refreshes stale cache on session_start", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    const fp = scryptSync("sk-test", "pi-provider-litellm-cache-fingerprint-v1", 32).toString("hex");
+    await writeFile(
+      join(agentDir, "litellm-models.json"),
+      JSON.stringify({
+        baseUrl: "https://litellm.example.com",
+        apiKeyFingerprint: fp,
+        fetchedAt: Date.now() - 25 * 60 * 60 * 1000,
+        source: "model_info",
+        models: [{ id: "test-model", name: "test-model", cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }],
+      }),
+    );
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        callCount++;
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "test-model",
+              model_info: {
+                mode: "chat",
+                input_cost_per_token: 0.000006,
+                output_cost_per_token: 0.00003,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    // Extension used stale cache, no fetch during init
+    expect(callCount).toBe(0);
+
+    // Fire session_start to trigger stale auto-refresh (fire-and-forget)
+    const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+    for (const handler of sessionStartHandlers) {
+      await handler({ reason: "start" }, { sessionManager: { getSessionFile: () => undefined } });
+    }
+    const endHandler = pi.handlers.get("message_end")?.[0];
+    await vi.waitFor(async () => {
+      const result = await endHandler?.({
+        message: {
+          role: "assistant",
+          model: "test-model",
+          usage: { input: 1000, output: 1000 },
+        },
+      });
+      // After refresh: input: 0.000006 * 1000 = 0.006, output: 0.000030 * 1000 = 0.030
+      expect(result.message.usage.cost.total).toBeCloseTo(0.036, 6);
+    });
+    expect(callCount).toBe(1);
+  });
+
+  it("handles stale refresh failure silently on session_start", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    const fp = scryptSync("sk-test", "pi-provider-litellm-cache-fingerprint-v1", 32).toString("hex");
+    await writeFile(
+      join(agentDir, "litellm-models.json"),
+      JSON.stringify({
+        baseUrl: "https://litellm.example.com",
+        apiKeyFingerprint: fp,
+        fetchedAt: Date.now() - 25 * 60 * 60 * 1000,
+        source: "model_info",
+        models: [
+          {
+            id: "test-model",
+            name: "test-model",
+            cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      }),
+    );
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        callCount++;
+        throw new Error("network error");
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    // Fire session_start — fire-and-forget refresh kicks off
+    const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+    for (const handler of sessionStartHandlers) {
+      await handler({ reason: "start" }, { sessionManager: { getSessionFile: () => undefined } });
+    }
+
+    // Wait for background refresh to attempt the fetch (and fail silently)
+    await vi.waitFor(() => expect(callCount).toBe(1));
+
+    // Existing cached costs still work after the refresh failure
+    const endHandler = pi.handlers.get("message_end")?.[0];
+    const result = await endHandler?.({
+      message: {
+        role: "assistant",
+        model: "test-model",
+        usage: { input: 1000, output: 1000 },
+      },
+    });
+    // Original costs: input: 3/1M * 1000 = 0.003, output: 15/1M * 1000 = 0.015
+    expect(result.message.usage.cost.total).toBeCloseTo(0.018, 6);
   });
 });
