@@ -19,6 +19,17 @@ describe("package gallery metadata", () => {
   });
 });
 
+describe("pi package compatibility", () => {
+  it("allows the supported 0.75 and 0.76 pi package lines", async () => {
+    const { default: manifest } = await import("../package.json", {
+      with: { type: "json" },
+    });
+
+    expect(manifest.peerDependencies["@earendil-works/pi-ai"]).toBe(">=0.75.4 <0.77.0");
+    expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(">=0.75.4 <0.77.0");
+  });
+});
+
 describe("dependency security overrides", () => {
   it("keeps vulnerable transitive dependencies above alerted ranges", async () => {
     const lockfile = JSON.parse(await readFile("package-lock.json", "utf8")) as {
