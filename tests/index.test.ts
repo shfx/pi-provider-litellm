@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,6 +94,10 @@ async function writeModelCache(agentDir: string, helperPath: string): Promise<vo
 async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<void>> {
   vi.resetModules();
   vi.doMock("@earendil-works/pi-coding-agent", () => {
+    type StoredEntry =
+      | { type: "api_key"; key: string }
+      | { type: "oauth"; access: string; expires: number; refresh: string; baseUrl?: string };
+
     class TestAuthStorage {
       constructor(private readonly authPath: string) {}
 
@@ -100,12 +105,22 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
         return new TestAuthStorage(authPath);
       }
 
+      private readData(): Record<string, StoredEntry> {
+        try {
+          return JSON.parse(readFileSync(this.authPath, "utf8")) as Record<string, StoredEntry>;
+        } catch {
+          return {};
+        }
+      }
+
+      set(provider: string, credential: StoredEntry): void {
+        const data = this.readData();
+        data[provider] = credential;
+        writeFileSync(this.authPath, JSON.stringify(data), "utf8");
+      }
+
       async getApiKey(provider: string): Promise<string | undefined> {
-        const parsed = JSON.parse(await readFile(this.authPath, "utf8")) as Record<
-          string,
-          { type: "api_key"; key: string } | { type: "oauth"; access: string; expires: number; refresh: string }
-        >;
-        const entry = parsed[provider];
+        const entry = this.readData()[provider];
         if (entry?.type === "api_key") return process.env[entry.key] || entry.key;
         if (entry?.type === "oauth") return entry.access;
         return undefined;
@@ -290,10 +305,11 @@ describe("extension startup", () => {
     });
   });
 
-  it("uses LITELLM_API_KEY_HELPER for startup discovery and per-request provider auth", async () => {
+  it("routes LITELLM_API_KEY_HELPER auth through the uncached OAuth hooks", async () => {
     const agentDir = await makeAgentDir();
-    const token = makeJwt(Math.floor(Date.now() / 1000) + 3600);
-    const helperPath = await writeHelper(agentDir, [token]);
+    const first = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+    const second = makeJwt(Math.floor(Date.now() / 1000) + 7200);
+    const helperPath = await writeHelper(agentDir, [first, second]);
     process.env.LITELLM_BASE_URL = "https://litellm.example.com/v1";
     process.env.LITELLM_API_KEY = "stale-token";
     process.env.LITELLM_API_KEY_HELPER = helperPath;
@@ -307,11 +323,54 @@ describe("extension startup", () => {
     const pi = createPi();
     await extension(pi);
 
-    expect(seenAuthHeaders).toEqual([`Bearer ${token}`]);
+    // Startup discovery still resolves a fresh helper token (one helper invocation).
+    expect(seenAuthHeaders).toEqual([`Bearer ${first}`]);
+    expect(await readHelperCount(agentDir)).toBe(1);
+
+    // The provider key is never the `!helper` command (Pi caches `!command` keys for the process
+    // lifetime); the literal env var is used as the static fallback instead.
     expect(pi.providers[0]?.config).toMatchObject({
       baseUrl: "https://litellm.example.com/v1",
-      apiKey: `!${helperPath}`,
+      apiKey: "LITELLM_API_KEY",
     });
+
+    // A command-backed OAuth credential is seeded so request-time auth refreshes via the helper.
+    const auth = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8")) as {
+      litellm: { type: string; access: string; refresh: string; expires: number; baseUrl?: string };
+    };
+    expect(auth.litellm).toMatchObject({ type: "oauth", refresh: `!${helperPath}`, expires: 0 });
+
+    // The OAuth getApiKey hook re-runs the helper for an expired/opaque token (uncached).
+    const refreshed = pi.providers[0]?.config.oauth?.getApiKey({
+      access: "expired-token",
+      refresh: `!${helperPath}`,
+      expires: 0,
+    });
+    expect(refreshed).toBe(second);
+    expect(await readHelperCount(agentDir)).toBe(2);
+  });
+
+  it("does not overwrite an existing /login OAuth credential with the env helper", async () => {
+    const agentDir = await makeAgentDir();
+    const helperPath = await writeHelper(agentDir, ["helper-token"]);
+    const stored = {
+      type: "oauth",
+      access: "logged-in-token",
+      refresh: "real-refresh-token",
+      expires: Date.now() + 3_600_000,
+      baseUrl: "https://litellm.example.com",
+    };
+    await writeFile(join(agentDir, "auth.json"), JSON.stringify({ litellm: stored }), "utf8");
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY_HELPER = helperPath;
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+
+    const extension = await loadExtension(agentDir);
+    await extension(createPi());
+
+    const auth = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8")) as { litellm: typeof stored };
+    expect(auth.litellm).toEqual(stored);
+    expect(await readHelperCount(agentDir)).toBe(0);
   });
 
   it.each([

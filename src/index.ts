@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, OAuthCredential, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
@@ -40,6 +40,43 @@ async function readAuthEntry(): Promise<AuthFileEntry | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * When `LITELLM_API_KEY_HELPER` is the only credential source we must not hand the `!helper`
+ * command to Pi's static provider API-key resolver: `!command` keys are documented as "cached for
+ * process lifetime", so a long-running session would keep sending the first helper-issued bearer
+ * token after it expires. Instead, seed a command-backed OAuth credential so every request resolves
+ * through the uncached OAuth `getApiKey`/`refreshToken` hooks, which re-run the helper on demand.
+ *
+ * The seeded credential starts expired (`access: ""`, `expires: 0`) so no helper is executed at
+ * startup (preserving the offline / disabled-discovery path); the first actual request triggers an
+ * OAuth refresh that runs the helper and stores a fresh token.
+ */
+async function seedHelperOAuthCredential(baseUrl: string | undefined): Promise<void> {
+  const helperCommand = getApiKeyHelperCommand();
+  if (!helperCommand) return;
+
+  const existing = await readAuthEntry();
+  if (existing?.type === "oauth" && existing.refresh === helperCommand) {
+    // A command-backed OAuth credential is already in place (seeded earlier or via `/login`); leave
+    // its current token/expiry untouched so we do not discard a freshly refreshed token or rewrite
+    // auth.json on every startup.
+    return;
+  }
+  if (existing) {
+    // Respect an explicit `/login litellm` or stored api_key entry that uses different credentials.
+    return;
+  }
+
+  const credential: OAuthCredential = {
+    type: "oauth",
+    access: "",
+    refresh: helperCommand,
+    expires: 0,
+    ...(baseUrl ? { baseUrl } : {}),
+  };
+  AuthStorage.create(getAuthPath()).set(PROVIDER_NAME, credential);
 }
 
 function cleanConfig(raw: string | undefined): string | undefined {
@@ -359,10 +396,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     modifyModels: modifyLiteLLMModels,
   };
 
+  // Route env-helper requests through the uncached OAuth hooks instead of the static `!command`
+  // provider key (which Pi caches for the process lifetime). Seeding is idempotent and starts the
+  // credential expired so the helper is only executed when a request actually needs a token.
+  await seedHelperOAuthCredential(creds.baseUrl);
+
   function registerProvider(baseUrl: string | undefined, models: ProviderModelConfig[]): void {
     pi.registerProvider(PROVIDER_NAME, {
       baseUrl: baseUrl ? `${baseUrl}/v1` : "https://litellm.example.com/v1",
-      apiKey: getApiKeyHelperCommand() ?? ENV_API_KEY,
+      // The helper command is never handed to Pi's static provider key resolver (it would be
+      // cached for the process lifetime). When a helper is configured it is resolved per request
+      // through the OAuth credential seeded above; otherwise we expose the literal
+      // `LITELLM_API_KEY` env var.
+      apiKey: ENV_API_KEY,
       api: "openai-completions",
       models,
       oauth,

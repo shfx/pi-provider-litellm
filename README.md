@@ -61,7 +61,7 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LITELLM_API_KEY_HELPER` | unset | Command that prints a fresh LiteLLM bearer token. Takes precedence over `LITELLM_API_KEY`. |
+| `LITELLM_API_KEY_HELPER` | unset | Command that prints a fresh LiteLLM bearer token. Takes precedence over `LITELLM_API_KEY`. The helper is resolved per request through an internal OAuth credential so rotating/short-lived tokens are always refreshed — it is never registered as a `!command` provider key (those are cached for the process lifetime). |
 | `LITELLM_OFFLINE` | unset | If `1`, skip discovery on this start; use cache only |
 | `LITELLM_DISCOVERY_TIMEOUT_MS` | `5000` | Discovery fetch timeout in ms; `0` to skip discovery |
 
