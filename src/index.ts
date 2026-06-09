@@ -358,11 +358,15 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
   }
 
+  let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
+
   const oauth = {
     name: "LiteLLM",
     login: (callbacks: OAuthLoginCallbacks) =>
       loginLiteLLM(callbacks, (next) => {
         cacheFetchedAt = next.fetchedAt;
+        registerProvider(next.baseUrl, next.models);
+        updateCosts(next.models);
       }),
     refreshToken: refreshLiteLLM,
     getApiKey: getLiteLLMApiKey,
@@ -388,7 +392,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   registerProvider(creds.baseUrl, models);
 
-  const updateCosts = setupLiteLLMCostTracking(pi, models);
+  updateCosts = setupLiteLLMCostTracking(pi, models);
 
   let refreshInProgress: Promise<RefreshResult> | null = null;
 
