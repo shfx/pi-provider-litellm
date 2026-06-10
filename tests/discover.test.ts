@@ -258,6 +258,109 @@ describe("discoverModels fallback to /v1/models", () => {
   });
 });
 
+describe("discoverModels fallback to /health", () => {
+  it("uses /health and per-endpoint /model/info when OpenAI model listing is unavailable", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      urls.push(url);
+      if (url.endsWith("/model/info")) return new Response(null, { status: 404 });
+      if (url.endsWith("/v1/models")) return new Response(null, { status: 404 });
+      if (url.endsWith("/health")) {
+        return jsonResponse(200, {
+          healthy_endpoints: [
+            { model: "vertex/claude-sonnet", model_id: "uuid-1" },
+            { model: "openai/gpt-4o-mini", model_id: "uuid-2" },
+          ],
+        });
+      }
+      if (url.endsWith("/model/info?litellm_model_id=uuid-1")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "vertex/claude-sonnet",
+              model_info: {
+                mode: "chat",
+                max_input_tokens: 200000,
+                supports_vision: true,
+                input_cost_per_token: 0.000003,
+                output_cost_per_token: 0.000015,
+              },
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/model/info?litellm_model_id=uuid-2")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "openai/gpt-4o-mini",
+              model_info: {
+                mode: "chat",
+                max_input_tokens: 128000,
+                max_output_tokens: 16384,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(urls).toEqual([
+      "https://litellm.example.com/model/info",
+      "https://litellm.example.com/v1/models",
+      "https://litellm.example.com/health",
+      "https://litellm.example.com/model/info?litellm_model_id=uuid-1",
+      "https://litellm.example.com/model/info?litellm_model_id=uuid-2",
+    ]);
+    expect(result.source).toBe("health");
+    expect(result.models.map((model) => model.id)).toEqual(["vertex/claude-sonnet", "openai/gpt-4o-mini"]);
+    expect(result.models[0]).toMatchObject({
+      input: ["text", "image"],
+      contextWindow: 200000,
+      compat: { supportsStore: false, cacheControlFormat: "anthropic" },
+    });
+  });
+
+  it("uses healthy endpoint model names when /health entries do not include model ids", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      urls.push(url);
+      if (url.endsWith("/model/info")) return new Response(null, { status: 404 });
+      if (url.endsWith("/v1/models")) return new Response(null, { status: 404 });
+      if (url.endsWith("/health")) {
+        return jsonResponse(200, {
+          healthy_endpoints: [
+            { model: "azure/gpt-35-turbo", api_base: "https://azure.example.com" },
+            { model: "anthropic/claude-3-5-sonnet", api_base: "https://anthropic.example.com" },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(urls).toEqual([
+      "https://litellm.example.com/model/info",
+      "https://litellm.example.com/v1/models",
+      "https://litellm.example.com/health",
+    ]);
+    expect(result.source).toBe("health");
+    expect(result.models.map((model) => model.id)).toEqual(["azure/gpt-35-turbo", "anthropic/claude-3-5-sonnet"]);
+    expect(result.models[1]).toMatchObject({
+      name: "anthropic/claude-3-5-sonnet",
+      contextWindow: 128000,
+      maxTokens: 16384,
+      compat: { supportsStore: false, cacheControlFormat: "anthropic" },
+    });
+  });
+});
+
 describe("discoverModels timeout", () => {
   it("aborts the fetch after timeoutMs", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {

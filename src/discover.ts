@@ -4,6 +4,7 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type {
   DiscoveryOptions,
   DiscoveryResult,
+  HealthResponse,
   ModelInfoEntry,
   ModelInfoResponse,
   ModelsListEntry,
@@ -227,6 +228,47 @@ function mapFromModelInfo(entry: ModelInfoEntry): ProviderModelConfig | undefine
   };
 }
 
+function mapFromHealthModelInfo(
+  entry: ModelInfoEntry,
+  fallbackId: string | undefined,
+): ProviderModelConfig | undefined {
+  const model = mapFromModelInfo(entry);
+  if (model || !fallbackId) return model;
+  if (entry.model_info?.mode && entry.model_info.mode !== "chat") return undefined;
+  return {
+    id: fallbackId,
+    name: fallbackId,
+    reasoning: entry.model_info?.supports_reasoning ?? false,
+    input: entry.model_info?.supports_vision ? ["text", "image"] : ["text"],
+    cost: {
+      input: (entry.model_info?.input_cost_per_token ?? 0) * 1_000_000,
+      output: (entry.model_info?.output_cost_per_token ?? 0) * 1_000_000,
+      cacheRead: (entry.model_info?.cache_read_input_token_cost ?? 0) * 1_000_000,
+      cacheWrite: (entry.model_info?.cache_creation_input_token_cost ?? 0) * 1_000_000,
+    },
+    contextWindow: entry.model_info?.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: entry.model_info?.max_output_tokens ?? DEFAULT_MAX_TOKENS,
+    compat: buildCompat(fallbackId),
+  };
+}
+
+function mapFromHealthEndpoint(entry: { model?: string }): ProviderModelConfig | undefined {
+  const id = entry.model;
+  if (!id) return undefined;
+  const catalogModel = findCatalogModel(id);
+  return {
+    id,
+    name: catalogModel?.name ?? id,
+    reasoning: catalogModel?.reasoning ?? false,
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    input: catalogModel?.input ?? ["text"],
+    cost: catalogModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: catalogModel?.maxTokens ?? DEFAULT_MAX_TOKENS,
+    compat: buildCompat(id),
+  };
+}
+
 function mapFromModelsList(
   entry: ModelsListEntry,
   modelsDev: ModelsDevResponse | undefined,
@@ -248,6 +290,30 @@ function mapFromModelsList(
   };
 }
 
+async function discoverFromHealth(
+  base: string,
+  apiKey: string,
+  options: DiscoveryOptions,
+): Promise<ProviderModelConfig[]> {
+  const healthResult = await fetchJson<HealthResponse>(`${base}/health`, apiKey, options);
+  if (!healthResult.ok) return [];
+  const endpoints = (healthResult.data.healthy_endpoints ?? []).filter((entry) => entry.model || entry.model_id);
+  const models = await Promise.all(
+    endpoints.map(async (endpoint) => {
+      if (!endpoint.model_id) return mapFromHealthEndpoint(endpoint);
+      const infoResult = await fetchJson<ModelInfoResponse>(
+        `${base}/model/info?litellm_model_id=${encodeURIComponent(endpoint.model_id)}`,
+        apiKey,
+        options,
+      );
+      if (!infoResult.ok) return mapFromHealthEndpoint(endpoint);
+      const entry = infoResult.data.data?.[0];
+      return entry ? mapFromHealthModelInfo(entry, endpoint.model) : mapFromHealthEndpoint(endpoint);
+    }),
+  );
+  return models.filter((model): model is ProviderModelConfig => model !== undefined);
+}
+
 export async function discoverModels(
   baseUrl: string,
   apiKey: string,
@@ -266,6 +332,10 @@ export async function discoverModels(
   }
   const listResult = await fetchJson<ModelsListResponse>(`${base}/v1/models`, apiKey, options);
   if (!listResult.ok) {
+    if ([401, 403, 404].includes(listResult.status)) {
+      const models = await discoverFromHealth(base, apiKey, options);
+      if (models.length > 0) return { source: "health", models };
+    }
     throw new Error(`/v1/models returned ${listResult.status}`);
   }
   const modelsDev = await getModelsDevCatalog(options);

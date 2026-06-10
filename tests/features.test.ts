@@ -23,8 +23,10 @@ type TestPi = {
   providers: Array<{ name: string; config: TestProviderConfig }>;
   commands: Map<string, TestCommand>;
   handlers: Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>;
+  tools: Array<{ name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }>;
   registerProvider(name: string, config: TestProviderConfig): void;
   registerCommand(name: string, command: TestCommand): void;
+  registerTool(tool: { name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }): void;
   on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any): void;
 };
 
@@ -57,7 +59,7 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
       }
     }
 
-    return { AuthStorage: TestAuthStorage, getAgentDir: () => agentDir };
+    return { AuthStorage: TestAuthStorage, defineTool: (tool: unknown) => tool, getAgentDir: () => agentDir };
   });
   const mod = await import("../src/index.js");
   return mod.default as unknown as (pi: TestPi) => Promise<void>;
@@ -68,11 +70,15 @@ function createPi(): TestPi {
     providers: [],
     commands: new Map(),
     handlers: new Map(),
+    tools: [],
     registerProvider(name: string, config: TestProviderConfig) {
       this.providers.push({ name, config });
     },
     registerCommand(name: string, command: TestCommand) {
       this.commands.set(name, command);
+    },
+    registerTool(tool: { name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }) {
+      this.tools.push(tool);
     },
     on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
@@ -86,9 +92,99 @@ afterEach(() => {
   delete process.env.LITELLM_BASE_URL;
   delete process.env.LITELLM_API_KEY;
   delete process.env.LITELLM_DISCOVERY_TIMEOUT_MS;
+  delete process.env.LITELLM_GCLOUD_TOKEN_AUTH;
+  delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
 });
 
 describe("feature parity", () => {
+  it("registers a command-backed gcloud token provider key when ADC auth is enabled", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    const adcPath = join(agentDir, "adc.json");
+    await writeFile(
+      adcPath,
+      JSON.stringify({
+        type: "authorized_user",
+        client_id: "client-id",
+        client_secret: "client-secret",
+        refresh_token: "refresh-token",
+      }),
+      "utf8",
+    );
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_GCLOUD_TOKEN_AUTH = "1";
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = adcPath;
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(pi.providers[0]?.config.apiKey).toMatch(/^!.*gcloud-token-cli\.js/);
+  });
+
+  it("registers discovered LiteLLM MCP tools as Pi tools", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) return jsonResponse(200, { data: [] });
+      if (url.endsWith("/mcp-rest/tools/list")) {
+        return jsonResponse(200, {
+          tools: [
+            {
+              name: "search",
+              description: "Search the web",
+              inputSchema: {
+                type: "object",
+                properties: { query: { type: "string" } },
+                required: ["query"],
+              },
+              mcp_info: { server_name: "brave", server_id: "brave-api" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(pi.tools.map((tool) => tool.name)).toContain("mcp_brave_search");
+  });
+
+  it("injects enabled LiteLLM skills into the system prompt", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) return jsonResponse(200, { data: [] });
+      if (url.endsWith("/mcp-rest/tools/list")) return jsonResponse(200, []);
+      if (url.endsWith("/v1/skills")) {
+        return jsonResponse(200, {
+          data: [{ id: "skill-1", name: "terraform", description: "Terraform conventions", enabled: true }],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeAgentStart = pi.handlers.get("before_agent_start")?.[0];
+    const result = await beforeAgentStart?.({ systemPrompt: "Base prompt" }, {});
+
+    expect(result.systemPrompt).toContain("Base prompt");
+    expect(result.systemPrompt).toContain("<litellm_skills>");
+    expect(result.systemPrompt).toContain("Terraform conventions");
+  });
+
   it("registers cost tracking and session grouping handlers", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";

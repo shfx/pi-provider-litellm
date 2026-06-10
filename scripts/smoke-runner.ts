@@ -1,4 +1,5 @@
 import { discoverModels, normalizeBaseUrl } from "../src/discover.js";
+import type { DiscoverySource } from "../src/types.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const SMOKE_PROMPT = "Reply with one short word.";
@@ -9,7 +10,7 @@ export type SmokeCompletion = {
 };
 
 export type SmokeResult = {
-  source: "model_info" | "models_list";
+  source: DiscoverySource;
   discoveredCount: number;
   completions: SmokeCompletion[];
 };
