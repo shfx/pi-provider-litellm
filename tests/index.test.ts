@@ -746,7 +746,7 @@ describe("extension startup", () => {
         method: String(init?.method ?? "GET"),
         authorization: new Headers(init?.headers).get("authorization") ?? "",
       });
-      if (url.endsWith("/user/key/generate")) return jsonResponse(200, { key: "sk-virtual-abc" });
+      if (url.endsWith("/key/generate")) return jsonResponse(200, { key: "sk-virtual-abc" });
       if (url.endsWith("/model/info"))
         return jsonResponse(200, { data: [{ model_name: "gpt-4o", model_info: { mode: "chat" } }] });
       throw new Error(`unexpected URL: ${url}`);
@@ -781,7 +781,7 @@ describe("extension startup", () => {
     });
     expect(seenRequests).toContainEqual(
       expect.objectContaining({
-        url: "https://litellm.example.com/user/key/generate",
+        url: "https://litellm.example.com/key/generate",
         method: "POST",
         authorization: `Bearer ${jwt}`,
       }),
@@ -802,7 +802,7 @@ describe("extension startup", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       seenAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
-      if (url.endsWith("/user/key/generate")) return jsonResponse(200, { key: "sk-stripped" });
+      if (url.endsWith("/key/generate")) return jsonResponse(200, { key: "sk-stripped" });
       if (url.endsWith("/model/info"))
         return jsonResponse(200, { data: [{ model_name: "gpt-4o", model_info: { mode: "chat" } }] });
       throw new Error(`unexpected URL: ${url}`);
@@ -862,7 +862,7 @@ describe("extension startup", () => {
     const progress = vi.fn();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith("/user/key/generate")) return jsonResponse(403, { error: "forbidden" });
+      if (url.endsWith("/key/generate")) return jsonResponse(403, { error: "forbidden" });
       if (url.endsWith("/model/info"))
         return jsonResponse(200, { data: [{ model_name: "gpt-4o", model_info: { mode: "chat" } }] });
       throw new Error(`unexpected URL: ${url}`);

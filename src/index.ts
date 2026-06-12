@@ -103,7 +103,7 @@ function openInBrowser(url: string): void {
 }
 
 async function generateVirtualKey(baseUrl: string, userToken: string, signal?: AbortSignal): Promise<string> {
-  const response = await fetch(`${baseUrl}/user/key/generate`, {
+  const response = await fetch(`${baseUrl}/key/generate`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${userToken}`,
@@ -117,7 +117,7 @@ async function generateVirtualKey(baseUrl: string, userToken: string, signal?: A
     throw new Error(`Virtual key generation failed (${response.status}): ${text}`);
   }
   const data = (await response.json()) as { key?: unknown };
-  if (typeof data.key !== "string" || !data.key) throw new Error("No key in response from /user/key/generate");
+  if (typeof data.key !== "string" || !data.key) throw new Error("No key in response from /key/generate");
   return data.key;
 }
 
