@@ -84,23 +84,62 @@ function toKnownProvider(provider: string | undefined): KnownProvider | undefine
 
 function findCatalogModel(id: string, ownedBy?: string): Model<Api> | undefined {
   const prefixProvider = toKnownProvider(id.split("/")[0]);
-  const candidates = [toKnownProvider(ownedBy), prefixProvider].filter(
+  const lookupIds = catalogLookupIds(id);
+  const candidates = [toKnownProvider(ownedBy), prefixProvider, lookupIds.length > 1 ? "anthropic" : undefined].filter(
     (provider): provider is KnownProvider => provider !== undefined,
   );
 
   for (const provider of candidates) {
-    const exact = getModels(provider).find((model) => model.id === id);
-    if (exact) return exact;
-    const providerQualified = getModels(provider).find((model) => model.id === `${provider}/${id}`);
-    if (providerQualified) return providerQualified;
+    const match = findCatalogModelInProvider(provider, lookupIds);
+    if (match) return match;
   }
 
   for (const provider of getProviders()) {
-    const exact = getModels(provider).find((model) => model.id === id);
-    if (exact) return exact;
+    const match = findCatalogModelInProvider(provider, lookupIds);
+    if (match) return match;
   }
 
   return undefined;
+}
+
+function catalogLookupIds(id: string): string[] {
+  const lookupIds = new Set([id]);
+  const unprefixed = id.includes("/") ? id.slice(id.indexOf("/") + 1) : id;
+  lookupIds.add(unprefixed);
+
+  const anthropicAlias = unprefixed.toLowerCase().replaceAll(".", "-");
+  const match = /^(?:claude-)?(opus|sonnet|haiku)-(\d+)-(\d+)$/.exec(anthropicAlias);
+  if (match) lookupIds.add(`claude-${match[1]}-${match[2]}-${match[3]}`);
+
+  return [...lookupIds];
+}
+
+function findCatalogModelInProvider(provider: KnownProvider, lookupIds: string[]): Model<Api> | undefined {
+  for (const lookupId of lookupIds) {
+    const exact = getModels(provider).find((model) => model.id === lookupId);
+    if (exact) return exact;
+    const providerQualified = getModels(provider).find((model) => model.id === `${provider}/${lookupId}`);
+    if (providerQualified) return providerQualified;
+  }
+  return undefined;
+}
+
+function mapModelInfoCost(
+  info: NonNullable<ModelInfoEntry["model_info"]>,
+  fallback?: ProviderModelConfig["cost"],
+): NonNullable<ProviderModelConfig["cost"]> {
+  return {
+    input: info.input_cost_per_token !== undefined ? info.input_cost_per_token * 1_000_000 : (fallback?.input ?? 0),
+    output: info.output_cost_per_token !== undefined ? info.output_cost_per_token * 1_000_000 : (fallback?.output ?? 0),
+    cacheRead:
+      info.cache_read_input_token_cost !== undefined
+        ? info.cache_read_input_token_cost * 1_000_000
+        : (fallback?.cacheRead ?? 0),
+    cacheWrite:
+      info.cache_creation_input_token_cost !== undefined
+        ? info.cache_creation_input_token_cost * 1_000_000
+        : (fallback?.cacheWrite ?? 0),
+  };
 }
 
 function getFallbackProviderAndModel(id: string, ownedBy?: string): { provider?: string; modelId: string } {
@@ -211,17 +250,13 @@ function mapFromModelInfo(entry: ModelInfoEntry): ProviderModelConfig | undefine
   if (!id) return undefined;
   const info = entry.model_info ?? {};
   if (info.mode && info.mode !== "chat") return undefined;
+  const catalogModel = findCatalogModel(id);
   return {
     id,
     name: id,
     reasoning: info.supports_reasoning ?? false,
     input: info.supports_vision ? ["text", "image"] : ["text"],
-    cost: {
-      input: (info.input_cost_per_token ?? 0) * 1_000_000,
-      output: (info.output_cost_per_token ?? 0) * 1_000_000,
-      cacheRead: (info.cache_read_input_token_cost ?? 0) * 1_000_000,
-      cacheWrite: (info.cache_creation_input_token_cost ?? 0) * 1_000_000,
-    },
+    cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
@@ -235,19 +270,16 @@ function mapFromHealthModelInfo(
   const model = mapFromModelInfo(entry);
   if (model || !fallbackId) return model;
   if (entry.model_info?.mode && entry.model_info.mode !== "chat") return undefined;
+  const info = entry.model_info ?? {};
+  const catalogModel = findCatalogModel(fallbackId);
   return {
     id: fallbackId,
     name: fallbackId,
-    reasoning: entry.model_info?.supports_reasoning ?? false,
-    input: entry.model_info?.supports_vision ? ["text", "image"] : ["text"],
-    cost: {
-      input: (entry.model_info?.input_cost_per_token ?? 0) * 1_000_000,
-      output: (entry.model_info?.output_cost_per_token ?? 0) * 1_000_000,
-      cacheRead: (entry.model_info?.cache_read_input_token_cost ?? 0) * 1_000_000,
-      cacheWrite: (entry.model_info?.cache_creation_input_token_cost ?? 0) * 1_000_000,
-    },
-    contextWindow: entry.model_info?.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: entry.model_info?.max_output_tokens ?? DEFAULT_MAX_TOKENS,
+    reasoning: info.supports_reasoning ?? false,
+    input: info.supports_vision ? ["text", "image"] : ["text"],
+    cost: mapModelInfoCost(info, catalogModel?.cost),
+    contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(fallbackId),
   };
 }
