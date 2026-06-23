@@ -55,7 +55,7 @@ describe("dependency security overrides", () => {
     // is fixed upstream. Any other copy or version drift must fail this test.
     expect(copiesOf("protobufjs")).toEqual({
       "node_modules/protobufjs": "8.2.1",
-      "node_modules/@earendil-works/pi-coding-agent/node_modules/protobufjs": "7.5.9",
+      "node_modules/@earendil-works/pi-coding-agent/node_modules/protobufjs": "7.6.4",
     });
   });
 });
