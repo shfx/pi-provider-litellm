@@ -21,6 +21,7 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).toContain("Wait for VidaiMock");
     expect(workflow).toContain("VIDAIMOCK_BASE_URL: http://127.0.0.1:8100");
     expect(workflow).toContain("LITELLM_SMOKE_MODELS: vidaimock-openai anthropic/vidaimock-claude");
+    expect(workflow).toContain("LITELLM_SMOKE_EXPECT_SOURCE: model_info");
     expect(workflow).toContain("LITELLM_CLI_SMOKE_MODEL: vidaimock-openai");
     expect(workflow).toContain("model_name: vidaimock-openai");
     expect(workflow).toContain("model_name: anthropic/vidaimock-claude");
