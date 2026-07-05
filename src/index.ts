@@ -437,9 +437,6 @@ async function resolveCredentials(
   const configuredBase =
     cleanConfig(definition.baseUrl) ?? (definition.useDefaultEnv ? cleanConfig(process.env[ENV_BASE_URL]) : undefined);
   const envKey = definition.useDefaultEnv ? cleanConfig(process.env[ENV_API_KEY]) : undefined;
-  const configuredKey = definition.apiKeyConfig
-    ? resolveConfigValue(definition.apiKeyConfig, { executeCommands: executeHelpers })
-    : undefined;
   const envHelperCommand = definition.useDefaultEnv ? getApiKeyHelperCommand() : undefined;
   const useGcloudToken = definition.useGcloudTokenAuth && isGcloudTokenAuthEnabled();
   const authBase = entry?.type === "oauth" ? entry.baseUrl?.trim() : undefined;
@@ -451,6 +448,12 @@ async function resolveCredentials(
         ? (await AuthStorage.create(getAuthPath()).getApiKey(definition.name, { includeFallback: false }))?.trim()
         : undefined;
   const gcloudKey = executeHelpers && gcloudCacheKey ? (await getGcloudToken())?.trim() : undefined;
+  // Resolved lazily so a `!command` key is not executed when a
+  // higher-precedence credential (saved auth, gcloud token) already won.
+  const configuredKey =
+    !authKey && !gcloudKey && definition.apiKeyConfig
+      ? resolveConfigValue(definition.apiKeyConfig, { executeCommands: executeHelpers })
+      : undefined;
   const helperKey =
     !authKey && !gcloudKey && !configuredKey && executeHelpers && envHelperCommand
       ? executeApiKeyCommand(envHelperCommand)

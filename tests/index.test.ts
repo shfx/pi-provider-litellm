@@ -1564,4 +1564,45 @@ describe("multi-provider hardening", () => {
     expect(pi.providers[0]?.config.apiKey).toBe("$CUSTOM_LITELLM_KEY");
     expect(await readHelperCount(agentDir)).toBe(0);
   });
+
+  it("does not execute an alias key command when a stored auth entry wins", async () => {
+    const agentDir = await makeAgentDir();
+    const countingHelper = await writeHelper(agentDir, ["alias-command-key"]);
+    await writeFile(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ "litellm-anthropic": { type: "api_key", key: "stored-alias-key" } }),
+      "utf8",
+    );
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        litellm: {
+          providers: {
+            "litellm-anthropic": {
+              baseUrl: "https://litellm-anthropic.example.com",
+              apiKey: `!${countingHelper}`,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const seenAuthHeaders: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        seenAuthHeaders.push(new Headers(init?.headers).get("authorization") ?? "");
+        return jsonResponse(200, { data: [{ model_name: "claude-sonnet", model_info: { mode: "chat" } }] });
+      }
+      if (url.endsWith("/mcp-rest/tools/list")) return jsonResponse(200, { tools: [] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(seenAuthHeaders).toEqual(["Bearer stored-alias-key"]);
+    expect(await readHelperCount(agentDir)).toBe(0);
+  });
 });
