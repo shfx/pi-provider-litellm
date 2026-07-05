@@ -1731,4 +1731,33 @@ describe("multi-provider hardening", () => {
     expect(pi.providers.map((provider) => provider.name)).toEqual(["litellm", "team-claude"]);
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("Team Claude"));
   });
+
+  it("drops non-primitive header values instead of stringifying them", async () => {
+    const agentDir = await makeAgentDir();
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        litellm: {
+          providers: {
+            "litellm-anthropic": {
+              baseUrl: "https://litellm-anthropic.example.com",
+              apiKey: "$LITELLM_ANTHROPIC_API_KEY",
+              headers: { "x-obj": { team: "a" }, "x-null": null, "x-num": 30, "x-bool": false },
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(pi.providers[1]?.config.headers).toEqual({ "x-num": "30", "x-bool": "false" });
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("x-obj"));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("x-null"));
+  });
 });

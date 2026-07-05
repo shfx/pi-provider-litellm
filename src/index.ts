@@ -405,8 +405,14 @@ function parseHeaderRecord(value: unknown): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
     if (!key.trim()) continue;
-    const value = typeof raw === "string" ? resolveTemplateConfigValue(raw) : String(raw);
-    if (value) headers[key] = value;
+    let resolved: string | undefined;
+    if (typeof raw === "string") resolved = resolveTemplateConfigValue(raw);
+    else if (typeof raw === "number" || typeof raw === "boolean") resolved = String(raw);
+    else {
+      process.stderr.write(`LiteLLM: ignoring non-primitive header value for "${key}".\n`);
+      continue;
+    }
+    if (resolved) headers[key] = resolved;
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
