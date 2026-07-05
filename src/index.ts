@@ -292,6 +292,9 @@ function tokenExpiresAt(apiKey: string, opaqueFallback = PERMANENT_TOKEN_EXPIRES
 }
 
 function openInBrowser(url: string): void {
+  // Never invoke a shell here: cmd.exe re-parses metacharacters before `start`
+  // runs, which would make URL contents injectable. Launch is best-effort; the
+  // URL is also shown to the user, so launcher failures must not crash the process.
   const [cmd, args]: [string, string[]] =
     process.platform === "darwin"
       ? ["open", [url]]
