@@ -5,7 +5,7 @@ import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallback
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
-import { setupLiteLLMCostTracking } from "./cost.js";
+import { type ProviderModels, setupLiteLLMCostTracking } from "./cost.js";
 import {
   discoverModels,
   isGpt55Model,
@@ -965,8 +965,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const providerStates = await Promise.all(definitions.map(loadProviderState));
   const defaultState = providerStates.find((state) => state.definition.name === PROVIDER_NAME) ?? providerStates[0];
 
-  let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
-  const updateAllCosts = (): void => updateCosts(providerStates.flatMap((state) => state.models));
+  let updateCosts: (providerModels: ProviderModels[]) => void = () => undefined;
+  const providerModelsForCosts = (): ProviderModels[] =>
+    providerStates.map((state) => ({ provider: state.definition.name, models: state.models }));
+  const updateAllCosts = (): void => updateCosts(providerModelsForCosts());
 
   function defaultApiKeyConfig(definition: ProviderDefinition): string | undefined {
     if (definition.useDefaultEnv) {
@@ -1023,10 +1025,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   for (const state of providerStates) registerProvider(state);
 
-  updateCosts = setupLiteLLMCostTracking(
-    pi,
-    providerStates.flatMap((state) => state.models),
-  );
+  updateCosts = setupLiteLLMCostTracking(pi, providerModelsForCosts());
 
   async function resolveRuntimeApiKey(state = defaultState): Promise<string> {
     const fresh = await resolveCredentials(state.definition);

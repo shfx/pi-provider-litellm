@@ -1799,8 +1799,6 @@ describe("multi-provider hardening", () => {
     await extension(pi);
 
     expect(seenRequests).toEqual([{ customer: "team-b" }]);
-    expect((pi.providers[0]?.config.models as Array<{ id: string }>).map((model) => model.id)).toEqual([
-      "fresh-model",
-    ]);
+    expect((pi.providers[0]?.config.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["fresh-model"]);
   });
 });
