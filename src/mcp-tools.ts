@@ -6,6 +6,9 @@ import type { LiteLLMMcpTool } from "./types.js";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 30_000;
+const MCP_RETRY_DELAY_MS = 350;
+const MCP_RETRY_ATTEMPTS = 1;
+const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 interface RawLiteLLMMcpTool {
   name?: unknown;
@@ -31,6 +34,16 @@ function withTimeout(timeoutMs: number): { signal: AbortSignal; cancel: () => vo
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function isRetryableMcpResult(result: string): boolean {
+  const status = /: HTTP (\d+)$/.exec(result)?.[1];
+  if (status) return RETRYABLE_HTTP_STATUS.has(Number(status));
+  return result.startsWith("Error calling ");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -85,6 +98,24 @@ export async function discoverMcpTools(
 }
 
 export async function executeMcpTool(
+  baseUrl: string,
+  apiKey: string,
+  serverId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  for (let attempt = 0; attempt <= MCP_RETRY_ATTEMPTS; attempt++) {
+    const result = await executeMcpToolOnce(baseUrl, apiKey, serverId, toolName, args);
+    if (attempt < MCP_RETRY_ATTEMPTS && isRetryableMcpResult(result)) {
+      await sleep(MCP_RETRY_DELAY_MS);
+      continue;
+    }
+    return result;
+  }
+  return `Error calling ${toolName} on ${serverId}: retry attempts exhausted`;
+}
+
+async function executeMcpToolOnce(
   baseUrl: string,
   apiKey: string,
   serverId: string,
@@ -151,6 +182,7 @@ export async function createMcpToolDefinitions(
       label: `${mcpTool.server_name}: ${mcpTool.name}`,
       description: `${mcpTool.description} (via ${mcpTool.server_name} MCP server)`,
       promptSnippet: `${mcpTool.description} via ${mcpTool.server_name} MCP server`,
+      executionMode: "parallel",
       parameters,
       async execute(_toolCallId, params: Static<typeof parameters>) {
         const apiKey = await getApiKey();
