@@ -74,6 +74,18 @@ export async function createSkill(
   headers?: Record<string, string>,
 ): Promise<unknown> {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const skillHubPayload = input.source
+    ? {
+        name: input.name,
+        description: input.description,
+        source: input.source,
+      }
+    : {
+        name: input.name,
+        description: input.description,
+        code: input.code,
+        input_schema: input.inputSchema ?? { type: "object", properties: {} },
+      };
   let response = await fetch(`${normalizedBaseUrl}/claude-code/plugins`, {
     method: "POST",
     headers: {
@@ -81,13 +93,7 @@ export async function createSkill(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      name: input.name,
-      description: input.description,
-      source: input.source,
-      code: input.code,
-      input_schema: input.inputSchema ?? { type: "object", properties: {} },
-    }),
+    body: JSON.stringify(skillHubPayload),
     signal: AbortSignal.timeout(10_000),
   });
   if (response.status === 404) {
@@ -161,14 +167,23 @@ function formatSkills(skills: LiteLLMSkill[]): string {
 
 const CreateSkillParams = Type.Object({
   name: Type.String({ description: "Skill name" }),
-  description: Type.String({ description: "Skill description" }),
-  code: Type.String({ description: "Skill implementation or prompt code" }),
+  description: Type.Optional(Type.String({ description: "Skill description" })),
+  sourceJson: Type.Optional(Type.String({ description: "Optional Skill Hub source metadata JSON object" })),
+  code: Type.Optional(Type.String({ description: "Legacy Skills Gateway implementation or prompt code" })),
   inputSchemaJson: Type.Optional(Type.String({ description: "Optional JSON Schema string for skill inputs" })),
 });
 
 const DeleteSkillParams = Type.Object({
   skillId: Type.String({ description: "LiteLLM skill id" }),
 });
+
+function parseJsonObject(value: string, fieldName: string): Record<string, unknown> {
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
 
 export function createSkillToolDefinitions(
   baseUrl: string,
@@ -195,10 +210,22 @@ export function createSkillToolDefinitions(
       parameters: CreateSkillParams,
       async execute(_toolCallId, params: Static<typeof CreateSkillParams>) {
         const apiKey = await getApiKey();
+        const source = params.sourceJson ? parseJsonObject(params.sourceJson, "sourceJson") : undefined;
         const inputSchema = params.inputSchemaJson
-          ? (JSON.parse(params.inputSchemaJson) as Record<string, unknown>)
+          ? parseJsonObject(params.inputSchemaJson, "inputSchemaJson")
           : undefined;
-        const result = await createSkill(baseUrl, apiKey, { ...params, inputSchema }, headers);
+        const result = await createSkill(
+          baseUrl,
+          apiKey,
+          {
+            name: params.name,
+            description: params.description,
+            source,
+            code: params.code,
+            inputSchema,
+          },
+          headers,
+        );
         return { content: [{ type: "text", text: "LiteLLM skill created." }], details: { result } };
       },
     }),

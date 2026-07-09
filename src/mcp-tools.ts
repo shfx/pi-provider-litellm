@@ -10,6 +10,11 @@ const MCP_RETRY_DELAY_MS = 350;
 const MCP_RETRY_ATTEMPTS = 1;
 const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+interface McpExecutionResult {
+  text: string;
+  retryable: boolean;
+}
+
 interface RawLiteLLMMcpTool {
   name?: unknown;
   description?: unknown;
@@ -36,14 +41,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function isRetryableMcpResult(result: string): boolean {
-  const status = /: HTTP (\d+)$/.exec(result)?.[1];
-  if (status) return RETRYABLE_HTTP_STATUS.has(Number(status));
-  return result.startsWith("Error calling ");
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatMcpToolError(toolName: string, serverId: string, error: unknown): string {
+  return `Error calling ${toolName} on ${serverId}: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+function isRetryableTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error.name === "TimeoutError") return true;
+  if (error.message.startsWith("Timed out after ")) return true;
+  if (error.name !== "TypeError") return false;
+  return /fetch failed|failed to fetch|network|terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket/i.test(
+    error.message,
+  );
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -107,11 +120,11 @@ export async function executeMcpTool(
 ): Promise<string> {
   for (let attempt = 0; attempt <= MCP_RETRY_ATTEMPTS; attempt++) {
     const result = await executeMcpToolOnce(baseUrl, apiKey, serverId, toolName, args, headers);
-    if (attempt < MCP_RETRY_ATTEMPTS && isRetryableMcpResult(result)) {
+    if (attempt < MCP_RETRY_ATTEMPTS && result.retryable) {
       await sleep(MCP_RETRY_DELAY_MS);
       continue;
     }
-    return result;
+    return result.text;
   }
   return `Error calling ${toolName} on ${serverId}: retry attempts exhausted`;
 }
@@ -123,24 +136,47 @@ async function executeMcpToolOnce(
   toolName: string,
   args: Record<string, unknown>,
   headers?: Record<string, string>,
-): Promise<string> {
+): Promise<McpExecutionResult> {
   const { signal, cancel } = withTimeout(CALL_TIMEOUT_MS);
   try {
-    const response = await fetch(`${normalizeBaseUrl(baseUrl)}/mcp-rest/tools/call`, {
-      method: "POST",
-      headers: {
-        ...headers,
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ server_id: serverId, name: toolName, arguments: args }),
-      signal,
-    });
-    if (!response.ok) return `Error calling ${toolName} on ${serverId}: HTTP ${response.status}`;
-    const body = (await response.json()) as Record<string, unknown>;
-    return JSON.stringify("result" in body ? body.result : body, null, 2);
+    let response: Response;
+    try {
+      response = await fetch(`${normalizeBaseUrl(baseUrl)}/mcp-rest/tools/call`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ server_id: serverId, name: toolName, arguments: args }),
+        signal,
+      });
+    } catch (error) {
+      return {
+        text: formatMcpToolError(toolName, serverId, error),
+        retryable: isRetryableTransportError(error),
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        text: `Error calling ${toolName} on ${serverId}: HTTP ${response.status}`,
+        retryable: RETRYABLE_HTTP_STATUS.has(response.status),
+      };
+    }
+
+    try {
+      const body = (await response.json()) as unknown;
+      const bodyRecord = asRecord(body);
+      return {
+        text: JSON.stringify(bodyRecord && "result" in bodyRecord ? bodyRecord.result : body, null, 2),
+        retryable: false,
+      };
+    } catch (error) {
+      return { text: formatMcpToolError(toolName, serverId, error), retryable: false };
+    }
   } catch (error) {
-    return `Error calling ${toolName} on ${serverId}: ${error instanceof Error ? error.message : String(error)}`;
+    return { text: formatMcpToolError(toolName, serverId, error), retryable: false };
   } finally {
     cancel();
   }

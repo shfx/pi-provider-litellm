@@ -164,4 +164,32 @@ describe("createSkillToolDefinitions", () => {
     expect(result?.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("terraform") });
     expect(getApiKey).toHaveBeenCalledOnce();
   });
+
+  it("executes the create tool with Skill Hub source metadata", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { name: "terraform" }));
+    const getApiKey = vi.fn().mockResolvedValue("fresh-token");
+    const [, createTool] = createSkillToolDefinitions("https://litellm.example.com", getApiKey);
+    type Params = Static<TSchema>;
+
+    const result = await createTool?.execute(
+      "call-1",
+      {
+        name: "terraform",
+        description: "Terraform conventions",
+        sourceJson: JSON.stringify({ type: "git", url: "https://github.com/acme/skills.git" }),
+      } as Params,
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    expect(result?.content).toEqual([{ type: "text", text: "LiteLLM skill created." }]);
+    expect(getApiKey).toHaveBeenCalledOnce();
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body).toEqual({
+      name: "terraform",
+      description: "Terraform conventions",
+      source: { type: "git", url: "https://github.com/acme/skills.git" },
+    });
+  });
 });

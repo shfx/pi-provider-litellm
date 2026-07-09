@@ -136,6 +136,18 @@ describe("executeMcpTool", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not retry response parse failures after a successful HTTP response", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("not json", { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(
+      executeMcpTool("https://litellm.example.com", "sk-test", "brave", "search", { query: "pi" }),
+    ).resolves.toMatch(/^Error calling search on brave:/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createMcpToolDefinitions", () => {
