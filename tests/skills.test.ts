@@ -44,6 +44,17 @@ describe("listSkills", () => {
     await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual(skills);
   });
 
+  it("does not fall back to the LiteLLM Skills Gateway when Skill Hub returns a non-404 error", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(500, { error: "skill hub unavailable" }))
+      .mockResolvedValueOnce(jsonResponse(200, { data: [{ name: "legacy" }] }));
+
+    await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns skills from the LiteLLM Skills Gateway", async () => {
     const skills: LiteLLMSkill[] = [
       { id: "skill-1", name: "terraform", description: "Terraform conventions", enabled: true },

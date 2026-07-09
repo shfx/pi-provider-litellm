@@ -46,7 +46,7 @@ export async function listSkills(
       headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) {
+    if (response.status === 404) {
       response = await fetch(`${normalizedBaseUrl}/v1/skills`, {
         headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
