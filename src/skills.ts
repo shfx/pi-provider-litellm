@@ -41,24 +41,26 @@ export async function listSkills(
     return skillsCache.skills;
   }
 
-  try {
-    let response = await fetch(`${normalizedBaseUrl}/claude-code/marketplace.json`, {
-      headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    }).catch(() => undefined);
-    if (!response || response.status === 404 || response.status >= 500) {
-      response = await fetch(`${normalizedBaseUrl}/v1/skills`, {
+  const fetchSkills = async (path: string): Promise<LiteLLMSkill[]> => {
+    try {
+      const response = await fetch(`${normalizedBaseUrl}${path}`, {
         headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
       });
+      return response.ok ? getSkillsFromBody(await response.json()) : [];
+    } catch {
+      return [];
     }
-    if (!response.ok) return [];
-    const skills = getSkillsFromBody(await response.json());
-    skillsCache = { baseUrl: normalizedBaseUrl, apiKey, fetchedAt: Date.now(), skills };
-    return skills;
-  } catch {
-    return [];
-  }
+  };
+
+  const [skillHub, legacy] = await Promise.all([
+    fetchSkills("/claude-code/marketplace.json"),
+    fetchSkills("/v1/skills"),
+  ]);
+  const skillHubNames = new Set(skillHub.map((skill) => skill.name));
+  const skills = [...skillHub, ...legacy.filter((skill) => !skillHubNames.has(skill.name))];
+  skillsCache = { baseUrl: normalizedBaseUrl, apiKey, fetchedAt: Date.now(), skills };
+  return skills;
 }
 
 export async function createSkill(

@@ -35,6 +35,17 @@ describe("listSkills", () => {
     );
   });
 
+  it("includes legacy skills when the LiteLLM Skill Hub marketplace is available", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(200, { plugins: [{ name: "hub" }] }))
+      .mockResolvedValueOnce(jsonResponse(200, { data: [{ id: "skill-1", name: "legacy" }] }));
+
+    await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual([
+      { name: "hub" },
+      { id: "skill-1", name: "legacy" },
+    ]);
+  });
+
   it("falls back to the LiteLLM Skills Gateway list endpoint", async () => {
     const skills: LiteLLMSkill[] = [{ id: "skill-1", name: "terraform", description: "Terraform conventions" }];
     vi.spyOn(globalThis, "fetch")
@@ -82,7 +93,7 @@ describe("listSkills", () => {
     await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual(skills);
     await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual(skills);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
