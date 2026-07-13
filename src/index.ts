@@ -749,6 +749,7 @@ const REASONING_SUPPRESSION_DEFAULTS: Record<string, unknown> = {
 function prepareLiteLLMRequestPayload(
   payload: Record<string, unknown>,
   modelId: string | undefined,
+  api: Api | undefined,
   sessionId: string | undefined,
 ): Record<string, unknown> | undefined {
   let next: Record<string, unknown> | undefined;
@@ -758,13 +759,19 @@ function prepareLiteLLMRequestPayload(
     next[key] = value;
   };
 
-  if (modelId && shouldSuppressReasoningContent(modelId)) {
+  if (api !== "openai-responses" && modelId && shouldSuppressReasoningContent(modelId)) {
     for (const [key, value] of Object.entries(REASONING_SUPPRESSION_DEFAULTS)) update(key, value);
   }
 
   // LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
   // Drop reasoning until the gateway honors /v1/responses for this route.
-  if (modelId && isGpt55Model(modelId) && Array.isArray(payload.tools) && payload.tools.length > 0) {
+  if (
+    api !== "openai-responses" &&
+    modelId &&
+    isGpt55Model(modelId) &&
+    Array.isArray(payload.tools) &&
+    payload.tools.length > 0
+  ) {
     const reasoningKeys = ["reasoning", "reasoning_effort", ...Object.keys(REASONING_SUPPRESSION_DEFAULTS)];
     for (const key of reasoningKeys) {
       if (payload[key] === undefined) continue;
@@ -1229,7 +1236,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   pi.on("before_provider_request", (event, ctx) => {
     if (!ctx.model?.provider || !providerNames.has(ctx.model.provider)) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
-    return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+    return prepareLiteLLMRequestPayload(
+      event.payload as Record<string, unknown>,
+      ctx.model?.id,
+      ctx.model?.api,
+      sessionId,
+    );
   });
 
   pi.on("before_agent_start", async (event) => {
