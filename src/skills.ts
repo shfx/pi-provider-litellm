@@ -142,8 +142,8 @@ export async function deleteSkill(
     method: "DELETE",
     headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
-  });
-  if (response.status === 404) {
+  }).catch(() => undefined);
+  if (!response || response.status === 404 || response.status >= 500) {
     response = await fetch(`${normalizedBaseUrl}/v1/skills/${encodeURIComponent(skillId)}`, {
       method: "DELETE",
       headers: { ...headers, Authorization: `Bearer ${apiKey}` },

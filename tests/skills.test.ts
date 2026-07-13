@@ -154,6 +154,28 @@ describe("skill helpers", () => {
     );
   });
 
+  it("falls back when the LiteLLM Skill Hub delete returns a server error", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(500, { error: "skill hub unavailable" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(deleteSkill("https://litellm.example.com", "sk-test", "skill-1")).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back when the LiteLLM Skill Hub delete request fails", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(deleteSkill("https://litellm.example.com", "sk-test", "skill-1")).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("formats enabled skills as a system-prompt section", () => {
     const section = createSkillsPromptSection([
       { id: "enabled", name: "terraform", description: "Terraform conventions", enabled: true },
