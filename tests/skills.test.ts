@@ -44,15 +44,26 @@ describe("listSkills", () => {
     await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual(skills);
   });
 
-  it("does not fall back to the LiteLLM Skills Gateway when Skill Hub returns a non-404 error", async () => {
+  it("falls back when the LiteLLM Skill Hub returns a server error", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse(500, { error: "skill hub unavailable" }))
       .mockResolvedValueOnce(jsonResponse(200, { data: [{ name: "legacy" }] }));
 
-    await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual([]);
+    await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual([{ name: "legacy" }]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back when the LiteLLM Skill Hub request fails", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"))
+      .mockResolvedValueOnce(jsonResponse(200, { data: [{ name: "legacy" }] }));
+
+    await expect(listSkills("https://litellm.example.com", "sk-test")).resolves.toEqual([{ name: "legacy" }]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns skills from the LiteLLM Skills Gateway", async () => {

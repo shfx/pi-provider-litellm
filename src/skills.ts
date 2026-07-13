@@ -45,8 +45,8 @@ export async function listSkills(
     let response = await fetch(`${normalizedBaseUrl}/claude-code/marketplace.json`, {
       headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
-    });
-    if (response.status === 404) {
+    }).catch(() => undefined);
+    if (!response || response.status === 404 || response.status >= 500) {
       response = await fetch(`${normalizedBaseUrl}/v1/skills`, {
         headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
