@@ -385,10 +385,18 @@ export async function discoverModels(
   const base = normalizeBaseUrl(baseUrl);
   const infoResult = await fetchJson<ModelInfoResponse>(`${base}/model/info`, apiKey, options);
   if (infoResult.ok) {
-    const models = (infoResult.data.data ?? [])
-      .map(mapFromModelInfo)
-      .filter((m): m is ProviderModelConfig => m !== undefined);
-    return { source: "model_info", models: deduplicateModels(models) };
+    const entries = new Map<string, ModelInfoEntry>();
+    for (const entry of infoResult.data.data ?? []) {
+      if (!entry.model_name) continue;
+      const previous = entries.get(entry.model_name);
+      entries.set(entry.model_name, {
+        ...previous,
+        ...entry,
+        model_info: { ...previous?.model_info, ...entry.model_info },
+      });
+    }
+    const models = [...entries.values()].map(mapFromModelInfo).filter((m): m is ProviderModelConfig => m !== undefined);
+    return { source: "model_info", models };
   }
   if (![401, 403, 404].includes(infoResult.status)) {
     throw new Error(`/model/info returned ${infoResult.status}`);

@@ -198,14 +198,23 @@ describe("discoverModels via /model/info", () => {
     expect(result.models[0]?.cost).toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 });
   });
 
-  it("deduplicates models by id so that only the first occurrence of each unique ID is retained", async () => {
+  it("preserves richer metadata from later duplicate model ids", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
       if (url.endsWith("/model/info")) {
         return jsonResponse(200, {
           data: [
-            { model_name: "openai/gpt-4o", model_info: { mode: "chat", max_input_tokens: 128000 } },
-            { model_name: "openai/gpt-4o", model_info: { mode: "chat", max_input_tokens: 8000 } },
+            { model_name: "custom-model", model_info: { mode: "chat" } },
+            {
+              model_name: "custom-model",
+              model_info: {
+                mode: "chat",
+                max_input_tokens: 200000,
+                max_output_tokens: 8192,
+                input_cost_per_token: 0.000003,
+                output_cost_per_token: 0.000015,
+              },
+            },
           ],
         });
       }
@@ -217,8 +226,10 @@ describe("discoverModels via /model/info", () => {
     expect(result.source).toBe("model_info");
     expect(result.models).toHaveLength(1);
     expect(result.models[0]).toMatchObject({
-      id: "openai/gpt-4o",
-      contextWindow: 128000,
+      id: "custom-model",
+      contextWindow: 200000,
+      maxTokens: 8192,
+      cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
     });
   });
 });
